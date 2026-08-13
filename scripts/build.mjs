@@ -6,9 +6,6 @@ import { execFileSync } from 'node:child_process';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, 'dist', 'sightline-for-frigate.js');
 
-// Dependency order for the source modules. The source files are real ES modules
-// for maintainability, while this tiny dependency-free builder flattens them
-// into the one browser module HACS/Home Assistant expects.
 const modules = [
   'src/constants.js',
   'src/helpers.js',
@@ -28,31 +25,28 @@ const modules = [
   'src/card/timeline-render.js',
   'src/card/lists.js',
   'src/card/download.js',
+  'src/card/multi-recording-core.js',
+  'src/card/multi-recording-player.js',
+  'src/card/multi-recording-controller.js',
+  'src/card/multi-recording.js',
   'src/card/SightlineCard.js',
+  'src/card/multi-recording-init.js',
   'src/editor/methods.js',
   'src/editor/SightlineCardEditor.js',
   'src/index.js'
 ];
 
 function flattenModule(code, filename) {
-  // Every import in this repository is deliberately a single-line static import.
-  // Since all files are concatenated in dependency order, imports become redundant.
   const strippedImports = code.replace(/^import\s+[^\n]+;\s*\n/gm, '');
-  const strippedExports = strippedImports
-    .replace(/^export\s+(?=(?:const|let|var|function|class)\b)/gm, '');
-
-  if (/^\s*(?:import|export)\s/m.test(strippedExports)) {
-    throw new Error(`Unsupported module syntax remains in ${filename}`);
-  }
+  const strippedExports = strippedImports.replace(/^export\s+(?=(?:const|let|var|function|class)\b)/gm, '');
+  if (/^\s*(?:import|export)\s/m.test(strippedExports)) throw new Error(`Unsupported module syntax remains in ${filename}`);
   return `\n// ── ${filename} ──\n${strippedExports.trim()}\n`;
 }
 
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const constants = fs.readFileSync(path.join(root, 'src/constants.js'), 'utf8');
 const versionMatch = constants.match(/VERSION\s*=\s*['\"]([^'\"]+)['\"]/);
-if (!versionMatch || versionMatch[1] !== pkg.version) {
-  throw new Error(`package.json version (${pkg.version}) must match src/constants.js VERSION (${versionMatch?.[1] ?? 'missing'})`);
-}
+if (!versionMatch || versionMatch[1] !== pkg.version) throw new Error(`package.json version (${pkg.version}) must match src/constants.js VERSION (${versionMatch?.[1] ?? 'missing'})`);
 
 const banner = `// Sightline for Frigate v${pkg.version}\n// Generated from src/ by scripts/build.mjs. Do not edit dist directly.\n`;
 let bundle = banner;
