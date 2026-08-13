@@ -1,13 +1,13 @@
 {
   "name": "sightline-for-frigate",
-  "version": "1.0.0",
-  "description": "Sightline for Frigate \u2014 a responsive Frigate NVR dashboard card for Home Assistant",
+  "version": "1.1.0",
+  "description": "Sightline for Frigate — a responsive Frigate NVR dashboard card for Home Assistant",
   "type": "module",
   "private": true,
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs",
-    "test": "node tests/smoke.mjs",
+    "test": "node tests/smoke.mjs && node tests/multiview.mjs && node tests/timeline-ux.mjs",
     "verify": "npm run build && npm run check && npm test"
   },
   "engines": {
