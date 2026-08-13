@@ -9483,6 +9483,261 @@ async _downloadRecRange(dlStart, dlEnd) {
   }
 };
 
+// ── src/card/multi-recording-core.js ──
+const multiRecordingCoreMethods = {
+  _multiRecordingBucket(target) {
+    const bucket=15*60;
+    const t=Math.max(0,Math.floor(Number(target)||0));
+    const start=Math.floor(t/bucket)*bucket;
+    const now=Math.floor(Date.now()/1000);
+    return {start,end:Math.max(start+1,Math.min(start+bucket,now))};
+  },
+  _multiRecordingCurrentTs(session=this._multiPlaybackSession) {
+    if(!session) return NaN;
+    return Number(session.clockBaseTs)+Math.max(0,(performance.now()-Number(session.clockStartedAt||performance.now()))/1000);
+  },
+  _multiRecordingHasCoverage(entry,ts) {
+    return (entry?.recordings||[]).some(r=>Number(r.start_time)<=ts&&Number(r.end_time)>=ts);
+  },
+  _multiRecordingSetState(entry,state,text='') {
+    if(!entry)return;
+    const available=state==='playing';
+    if(entry.mediaHost)entry.mediaHost.style.visibility=available?'visible':'hidden';
+    if(entry.status){entry.status.textContent=text||(available?'':'No recording');entry.status.style.display=available?'none':'flex';}
+  },
+  _multiRecordingSyncEntry(entry,absTs,force=false) {
+    if(!entry||entry.session!==this._multiPlaybackSession)return;
+    if(!this._multiRecordingHasCoverage(entry,absTs)){
+      this._multiRecordingSetState(entry,'gap','No recording');
+      try{entry.video?.pause?.();}catch(_){}
+      return;
+    }
+    const offset=this._frigateSeekPosition(absTs,entry.recordings,entry.inpointOffset||0);
+    if(!Number.isFinite(offset)){
+      this._multiRecordingSetState(entry,'gap','No recording');
+      return;
+    }
+    this._multiRecordingSetState(entry,'playing');
+    const video=entry.video;
+    if(!video||video.readyState<1)return;
+    const d=Number(video.duration);
+    const wanted=Number.isFinite(d)&&d>0?Math.max(0,Math.min(offset,Math.max(0,d-.05))):Math.max(0,offset);
+    const current=Number(video.currentTime);
+    if(force||!Number.isFinite(current)||Math.abs(current-wanted)>.55){try{video.currentTime=wanted;}catch(_){}}
+    video.muted=true;
+    if(video.paused){try{const p=video.play();if(p?.catch)p.catch(()=>{});}catch(_){}}
+  },
+  _multiRecordingBindVideo(entry,video) {
+    if(!entry||!video||entry.video===video)return;
+    entry.video=video;
+    video.muted=true;video.playsInline=true;video.preload='auto';video.controls=false;
+    video.setAttribute('playsinline','');video.setAttribute('webkit-playsinline','');
+    const sync=()=>{
+      if(entry.session!==this._multiPlaybackSession)return;
+      const ts=this._multiRecordingCurrentTs(entry.session);
+      if(Number.isFinite(ts))this._multiRecordingSyncEntry(entry,ts,true);
+    };
+    ['loadedmetadata','durationchange','canplay'].forEach(ev=>video.addEventListener(ev,sync));
+    sync();
+  }
+};
+
+// ── src/card/multi-recording-player.js ──
+const multiRecordingPlayerMethods = {
+  async _multiRecordingAttachPlayer(entry) {
+    const session=entry.session;
+    if(!session||session!==this._multiPlaybackSession||!entry.recordings.length)return;
+    const {clientId,cam,sourceStart,sourceEnd}=entry;
+    const isIOS=this._isIOSRecordingPlatform();
+    const attachHls=async()=>{
+      if(session!==this._multiPlaybackSession)return;
+      const leaf=isIOS?'index':'master';
+      const path=`/api/frigate/${encodeURIComponent(String(clientId))}/vod/${encodeURIComponent(String(cam))}/start/${sourceStart}/end/${sourceEnd}/${leaf}.m3u8`;
+      const url=isIOS?await this._signed(path):await this._resolveSignedVodPlaylist(path);
+      if(session!==this._multiPlaybackSession)return;
+      const player=this._createHlsPlayer(url,{autoplay:true,controls:false,muted:true});
+      player.style.cssText='position:absolute;inset:0;width:100%;height:100%;display:block;background:#000;pointer-events:none';
+      entry.mediaHost.innerHTML='';entry.mediaHost.appendChild(player);entry.player=player;
+      let tries=0;
+      const find=()=>{
+        if(session!==this._multiPlaybackSession)return;
+        const video=this._findVideo(player);
+        if(video){this._multiRecordingBindVideo(entry,video);return;}
+        if(++tries<160)entry.attachTimer=setTimeout(find,60);
+        else this._multiRecordingSetState(entry,'error','Unable to play recording');
+      };
+      find();
+    };
+    if(!isIOS){await attachHls();return;}
+    const path=`/api/frigate/${encodeURIComponent(String(clientId))}/recording/${encodeURIComponent(String(cam))}/start/${sourceStart}/end/${sourceEnd}`;
+    const url=await this._signed(path);
+    if(session!==this._multiPlaybackSession)return;
+    const video=document.createElement('video');
+    video.style.cssText='position:absolute;inset:0;width:100%;height:100%;display:block;background:#000;object-fit:contain;pointer-events:none';
+    entry.mediaHost.innerHTML='';entry.mediaHost.appendChild(video);entry.player=video;
+    this._multiRecordingBindVideo(entry,video);
+    let fallback=false;
+    video.addEventListener('error',()=>{
+      if(fallback||session!==this._multiPlaybackSession)return;
+      fallback=true;try{video.pause();video.removeAttribute('src');video.load();}catch(_){}attachHls();
+    },{once:true});
+    video.src=url;try{video.load();}catch(_){}
+  },
+
+  async _multiRecordingPrepareEntry(camera,index,slot,session) {
+    if(!slot)return null;
+    const name=cap(camera?.name||this._hass?.states?.[camera?.entity]?.attributes?.friendly_name||camera?.entity?.replace(/^camera\./,'')||`Camera ${index+1}`);
+    slot.innerHTML='';slot.dataset.multiRecording='1';slot.style.position='relative';
+    const mediaHost=document.createElement('div');
+    mediaHost.style.cssText='position:absolute;inset:0;background:#000;overflow:hidden';slot.appendChild(mediaHost);
+    const status=document.createElement('div');
+    status.style.cssText='position:absolute;inset:0;z-index:4;display:flex;align-items:center;justify-content:center;padding:18px;text-align:center;background:#000;color:rgba(255,255,255,.72);font:600 12px/1.35 -apple-system,BlinkMacSystemFont,system-ui,sans-serif';
+    status.textContent='Loading recording…';slot.appendChild(status);
+    const label=document.createElement('div');label.className='grid-label';label.textContent=name;slot.appendChild(label);
+    if(!this._camCache[camera.entity]?.discovered){try{await this._discoverOne(camera.entity);}catch(_){}}
+    if(session!==this._multiPlaybackSession)return null;
+    const cc=this._camCache[camera.entity]||{};
+    const clientId=camera.frigate_client_id||cc.clientId||this._config.frigate_client_id||'frigate';
+    const cam=cc.cam||this._hass?.states?.[camera.entity]?.attributes?.camera_name||camera.entity.replace(/^camera\./,'');
+    const entry={camera,index,name,slot,mediaHost,status,clientId,cam,sourceStart:session.sourceStart,sourceEnd:session.sourceEnd,recordings:[],inpointOffset:0,video:null,player:null,attachTimer:null,session};
+    try{
+      const rows=await this._ws({type:'frigate/recordings/get',instance_id:clientId,camera:cam,after:session.sourceStart,before:session.sourceEnd});
+      entry.recordings=(Array.isArray(rows)?rows:[]).filter(r=>Number(r.start_time)<session.sourceEnd&&Number(r.end_time)>session.sourceStart).sort((a,b)=>Number(a.start_time)-Number(b.start_time));
+    }catch(_){
+      entry.recordings=(Array.isArray(cc.recordings)?cc.recordings:[]).filter(r=>Number(r.start_time)<session.sourceEnd&&Number(r.end_time)>session.sourceStart).sort((a,b)=>Number(a.start_time)-Number(b.start_time));
+    }
+    if(session!==this._multiPlaybackSession)return null;
+    entry.inpointOffset=this._frigateInpointOffset(session.sourceStart,entry.recordings[0]);
+    if(!entry.recordings.length){this._multiRecordingSetState(entry,'gap','No recording');return entry;}
+    await this._multiRecordingAttachPlayer(entry);
+    return entry;
+  }
+};
+
+// ── src/card/multi-recording-controller.js ──
+const multiRecordingControllerMethods = {
+  _cancelMultiRecordingPlayback() {
+    const session=this._multiPlaybackSession;
+    if(!session)return;
+    this._multiPlaybackSession=null;
+    clearInterval(session.syncTimer);
+    for(const entry of session.entries||[]){
+      clearTimeout(entry?.attachTimer);
+      try{entry?.video?.pause?.();}catch(_){}
+      try{if(entry?.video&&entry.player===entry.video){entry.video.removeAttribute('src');entry.video.srcObject=null;entry.video.load();}}catch(_){}
+      try{entry?.player?.remove?.();}catch(_){}
+    }
+    const grid=this.shadowRoot?.querySelector?.('#cam-grid');
+    grid?.querySelector?.('#multi-recording-back-live')?.remove();
+    if(grid)delete grid.dataset.multiRecording;
+  },
+
+  async _showMultiRecording(target) {
+    const t=Math.max(0,Math.floor(Number(target)));
+    if(!Number.isFinite(t)||this._viewMode!=='grid'||(this._config?.cameras?.length||0)<2){
+      return recordingPlaybackMethods._showRecording.call(this,this._hourStart(t),this._hourStart(t)+3600,t);
+    }
+
+    const current=this._multiPlaybackSession;
+    if(current&&t>=current.sourceStart&&t<current.sourceEnd){
+      current.targetTs=t;
+      current.clockBaseTs=t;
+      current.clockStartedAt=performance.now();
+      this._playing={rec:t,multi:true};
+      this._scrubTarget=t;
+      this._updateTimelinePlaybackTime(t);
+      for(const entry of current.entries||[])this._multiRecordingSyncEntry(entry,t,true);
+      this._renderStreamCtrl();
+      return;
+    }
+
+    this._cancelActivePlayback();
+    const token=++this._playSeq;
+    const bucket=this._multiRecordingBucket(t);
+    const session={token,targetTs:t,clockBaseTs:t,clockStartedAt:performance.now(),sourceStart:bucket.start,sourceEnd:bucket.end,entries:[],syncTimer:null,advancing:false};
+    this._multiPlaybackSession=session;
+    this._playbackReturnViewMode='grid';
+    this._playing={rec:t,multi:true};
+    this._scrubTarget=t;
+    this._tab='live';
+    this._galleryMode='';
+
+    const viewer=this.shadowRoot.querySelector('#viewer');
+    if(viewer){viewer.innerHTML='';viewer.style.display='none';}
+    const engWrap=this.shadowRoot.querySelector('#eng-wrap');
+    if(engWrap)engWrap.style.display='none';
+    const grid=this.shadowRoot.querySelector('#cam-grid');
+    if(!grid)return;
+    grid.style.display='';
+    grid.style.position='relative';
+    await this._mountGrid();
+    if(session!==this._multiPlaybackSession||token!==this._playSeq)return;
+
+    const slots=[...grid.querySelectorAll('.grid-slot:not(.placeholder)')];
+    const back=document.createElement('button');
+    back.id='multi-recording-back-live';back.type='button';back.textContent='Back to Live';back.setAttribute('aria-label','Back to Live');
+    back.style.cssText='position:absolute;left:12px;top:12px;z-index:90;min-height:36px;padding:7px 12px;border:1px solid rgba(255,255,255,.24);border-radius:999px;background:rgba(16,16,18,.78);color:#fff;font:650 12px/1 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);cursor:pointer';
+    back.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();this._showLive();});
+    grid.appendChild(back);
+
+    const entries=await Promise.all(this._config.cameras.map((camera,index)=>this._multiRecordingPrepareEntry(camera,index,slots[index],session)));
+    if(session!==this._multiPlaybackSession||token!==this._playSeq)return;
+    session.entries=entries.filter(Boolean);
+    session.clockBaseTs=t;
+    session.clockStartedAt=performance.now();
+    this._updateTimelinePlaybackTime(t);
+    this._renderStreamCtrl();
+
+    const tick=()=>{
+      if(session!==this._multiPlaybackSession||token!==this._playSeq||this._viewMode!=='grid'||this._timelineInteracting)return;
+      const abs=this._multiRecordingCurrentTs(session);
+      if(!Number.isFinite(abs))return;
+      const now=Math.floor(Date.now()/1000);
+      if(abs>=now-1){
+        if(!session.advancing){session.advancing=true;this._refreshLiveFromTimeline();}
+        return;
+      }
+      if(abs>=session.sourceEnd-.25){
+        if(!session.advancing){session.advancing=true;this._showMultiRecording(session.sourceEnd);}
+        return;
+      }
+      session.targetTs=abs;
+      this._playing={rec:abs,multi:true};
+      this._scrubTarget=abs;
+      this._updateTimelinePlaybackTime(abs);
+      for(const entry of session.entries)this._multiRecordingSyncEntry(entry,abs,false);
+    };
+    tick();
+    session.syncTimer=setInterval(tick,250);
+  },
+
+  _cancelActivePlayback(keepSession=false) {
+    this._cancelMultiRecordingPlayback();
+    return recordingPlaybackMethods._cancelActivePlayback.call(this,keepSession);
+  },
+
+  async _seekTimelineTarget(target) {
+    const t=Math.max(0,Math.floor(Number(target)));
+    if(this._viewMode==='grid'&&(this._config?.cameras?.length||0)>1){
+      if(!Number.isFinite(t))return;
+      const seq=++this._timelineSeekSeq;
+      this._scrubTarget=t;
+      await this._showMultiRecording(t);
+      if(seq!==this._timelineSeekSeq)return;
+      return;
+    }
+    return timelineInteractionMethods._seekTimelineTarget.call(this,target);
+  },
+
+  _setViewMode(mode) {
+    if(mode!=='grid'&&this._multiPlaybackSession)this._cancelMultiRecordingPlayback();
+    return liveMethods._setViewMode.call(this,mode);
+  }
+};
+
+// ── src/card/multi-recording.js ──
+const multiRecordingMethods=Object.assign({},multiRecordingCoreMethods,multiRecordingPlayerMethods,multiRecordingControllerMethods);
+
 // ── src/card/SightlineCard.js ──
 class SightlineCard extends HTMLElement {
 constructor() {
@@ -9554,6 +9809,9 @@ SightlineCard.prototype._renderTimeline = function(...args) {
   for(const preview of this.shadowRoot?.querySelectorAll?.('.t-preview')||[]){ preview.style.setProperty('height',`${h}px`,'important'); preview.style.setProperty('width',`min(${w}px, calc(100% - var(--tl-content) - 10px))`,'important'); preview.style.setProperty('max-width',`${w}px`,'important'); }
   return result;
 };
+
+// ── src/card/multi-recording-init.js ──
+applyMethodGroups(SightlineCard.prototype, multiRecordingMethods);
 
 // ── src/editor/methods.js ──
 // Visual editor behavior.
