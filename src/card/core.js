@@ -11,21 +11,11 @@ setConfig(config) {
       cameras = config.cameras.map(c => {
         if (typeof c === 'string') return { entity:c, name:null, frigate_client_id:null, go2rtc_stream:null };
         const g = (c?.go2rtc && typeof c.go2rtc === 'object') ? c.go2rtc : {};
-        return {
-          entity:c?.entity || c?.camera_entity || c?.camera || '',
-          name:c?.name||null,
-          frigate_client_id:c?.frigate_client_id || g.frigate_client_id || null,
-          go2rtc_stream:c?.go2rtc_stream || g.stream || null
-        };
+        return { entity:c?.entity || c?.camera_entity || c?.camera || '', name:c?.name||null, frigate_client_id:c?.frigate_client_id || g.frigate_client_id || null, go2rtc_stream:c?.go2rtc_stream || g.stream || null };
       }).filter(c => c.entity);
     }
     const singleEntity = config.camera_entity || config.entity || config.camera;
-    if (!cameras.length && singleEntity) cameras = [{
-      entity:singleEntity,
-      name:config.title||null,
-      frigate_client_id:config.frigate_client_id || rootGo2rtc.frigate_client_id || null,
-      go2rtc_stream:config.go2rtc_stream || rootGo2rtc.stream || null
-    }];
+    if (!cameras.length && singleEntity) cameras = [{ entity:singleEntity, name:config.title||null, frigate_client_id:config.frigate_client_id || rootGo2rtc.frigate_client_id || null, go2rtc_stream:config.go2rtc_stream || rootGo2rtc.stream || null }];
     this._configError = cameras.length ? null : 'Select a Frigate camera entity.';
     if (!cameras.length) cameras = [{ entity:'', name:null, go2rtc_stream:null, frigate_client_id:null }];
     if (cameras.length > 4) cameras = cameras.slice(0, 4);
@@ -54,10 +44,7 @@ setConfig(config) {
     };
     if(timeline.glyph_max_px<timeline.glyph_min_px) timeline.glyph_max_px=timeline.glyph_min_px;
     const downloadMaxMinutes=num(downloadIn.max_range_minutes,120,1,720);
-    const download = {
-      default_range_seconds: Math.min(Math.round(downloadMaxMinutes*60),Math.round(num(downloadIn.default_range_seconds,60,2,1800))),
-      max_range_minutes: downloadMaxMinutes,
-    };
+    const download = { default_range_seconds: Math.min(Math.round(downloadMaxMinutes*60),Math.round(num(downloadIn.default_range_seconds,60,2,1800))), max_range_minutes: downloadMaxMinutes };
     const reviewedDefault=['all','unreviewed','reviewed'].includes(mediaIn.reviewed_default) ? mediaIn.reviewed_default : 'all';
     const media = { reviewed_default: reviewedDefault };
     const rawAspect=config.aspect_ratio==null || String(config.aspect_ratio).trim()==='' ? 'auto' : String(config.aspect_ratio).trim();
@@ -122,6 +109,18 @@ set hass(hass) {
 
 get _activeCam() { return this._config?.cameras[this._activeCamIdx] || this._config?.cameras[0]; },
 
+async _applyInitialMediaState() {
+    if(this._initialMediaStateApplied) return;
+    this._initialMediaStateApplied=true;
+    const tab=this._config?.default_tab||'live';
+    if(tab==='live') return;
+    await this._setGalleryMode(tab);
+    if(tab!=='clips' || !this._config?.autoplay_latest_clip || this._galleryMode!=='clips') return;
+    const source=this._eventsMode==='all'?this._allDisplayEvents():this._events;
+    const latest=this._filterMediaEvents(source).filter(ev=>ev?.has_clip).sort((a,b)=>Number(b.start_time||0)-Number(a.start_time||0))[0];
+    if(latest) await this._showClip(latest);
+  },
+
 _isEditorPreview() {
     let node=this;
     const editorTags=new Set(['hui-card-preview','hui-dialog-edit-card','hui-card-element-editor','hui-card-editor','hui-dialog-edit-card']);
@@ -141,30 +140,17 @@ getCardSize() { return 10; },
 getGridSize() { return { columns: 2, rows: 3 }; },
 
 disconnectedCallback() {
-    this._stopRotate();
-    this._cancelActivePlayback();
-    this._stopTalk();
+    this._stopRotate(); this._cancelActivePlayback(); this._stopTalk();
     if (this._refresh) clearInterval(this._refresh);
     if (this._timelineClockTimer) clearInterval(this._timelineClockTimer);
-    clearTimeout(this._timelineDataTimer);
-    clearTimeout(this._timelineDynamicTimer);
-    this._timelineDynamicTimer=null;
-    this._timelineDynamicPending=false;
-    clearTimeout(this._wt);
-    clearTimeout(this._mediaPickerApplyTimer);
-    clearTimeout(this._mediaPickerReleaseTimer);
-    this._mediaPickerActive=false;
-    this._mediaPickerActiveId='';
-    this._mediaPickerPendingFilterRender=false;
-    this._removeLiveFsMirror();
+    clearTimeout(this._timelineDataTimer); clearTimeout(this._timelineDynamicTimer); this._timelineDynamicTimer=null; this._timelineDynamicPending=false;
+    clearTimeout(this._wt); clearTimeout(this._mediaPickerApplyTimer); clearTimeout(this._mediaPickerReleaseTimer);
+    this._mediaPickerActive=false; this._mediaPickerActiveId=''; this._mediaPickerPendingFilterRender=false; this._removeLiveFsMirror();
     if (this._scrubAbort) { try { this._scrubAbort.abort(); } catch(_) {} this._scrubAbort=null; }
     if (this._scrollAbort) { try { this._scrollAbort.abort(); } catch(_) {} this._scrollAbort=null; }
-    ++this._timelineLoadSeq;
-    ++this._timelineDataSeq;
-    ++this._timelineSeekSeq;
+    ++this._timelineLoadSeq; ++this._timelineDataSeq; ++this._timelineSeekSeq;
     if (this._unsub) { try { this._unsub.then(u=>u&&u()); } catch(_) {} this._unsub=null; }
-    if (this._timelineResizeRaf) cancelAnimationFrame(this._timelineResizeRaf);
-    this._timelineResizeRaf=0;
+    if (this._timelineResizeRaf) cancelAnimationFrame(this._timelineResizeRaf); this._timelineResizeRaf=0;
     if (this._ro) this._ro.disconnect();
     if (this._micDeviceChangeHandler && navigator.mediaDevices?.removeEventListener) { try { navigator.mediaDevices.removeEventListener('devicechange', this._micDeviceChangeHandler); } catch (_) {} }
     this._micDeviceChangeHandler=null;
@@ -178,18 +164,13 @@ async _start() {
     const now = Math.floor(Date.now()/1000);
     this._timelineFocusTs = now;
     const initialTimelineSpan=this._timelineDefaultSpanSeconds();
-    this._winStart = now - initialTimelineSpan/2;
-    this._winEnd = now + initialTimelineSpan/2;
-    this._timelineZoom = 3600/initialTimelineSpan;
-    this._timelineFollowingLive = true;
-    this._timelineWasLiveBeforeGesture = false;
-    this._timelineLiveCrossed = false;
+    this._winStart = now - initialTimelineSpan/2; this._winEnd = now + initialTimelineSpan/2; this._timelineZoom = 3600/initialTimelineSpan;
+    this._timelineFollowingLive = true; this._timelineWasLiveBeforeGesture = false; this._timelineLiveCrossed = false;
     if (this._config.default_view === 'grid' && this._config.cameras.length > 1) this._setViewMode('grid');
     await this._mountEngine();
     await this._loadWindow(true, true);
     await this._applyInitialMediaState();
-    this._loadCalendar();
-    this._subscribe();
+    this._loadCalendar(); this._subscribe();
     this._refresh = setInterval(() => { if (this._isNowWindow()) this._loadWindow(true); this._loadFrigateFilterMetadata(); }, this._config.refresh_seconds*1000);
     if (this._timelineClockTimer) clearInterval(this._timelineClockTimer);
     this._timelineClockTimer = setInterval(() => {
@@ -198,7 +179,6 @@ async _start() {
       if (this._timelineFollowingLive) this._scheduleTimelineDynamicData('live');
     }, 1000);
     if (this._config.rotate_on_load === true && this._config.cameras.length > 1) this._startRotate();
-    this._setupResizeObserver();
-    this._stabilizeInitialTimeline();
+    this._setupResizeObserver(); this._stabilizeInitialTimeline();
   }
 };
