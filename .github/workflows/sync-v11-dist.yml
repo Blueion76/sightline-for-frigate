@@ -1,0 +1,32 @@
+name: Sync v1.1 dist
+on:
+  push:
+    branches: [feature/user-feedback-v1.1]
+    paths:
+      - "src/**"
+      - "package.json"
+      - "tests/**"
+      - ".github/workflows/sync-v11-dist.yml"
+permissions:
+  contents: write
+jobs:
+  build-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/user-feedback-v1.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+      - name: Commit generated dist
+        run: |
+          if git diff --quiet -- dist/sightline-for-frigate.js; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dist/sightline-for-frigate.js
+          git commit -m "Build v1.1.0 dist"
+          git push
