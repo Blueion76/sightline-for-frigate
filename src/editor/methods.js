@@ -452,7 +452,7 @@ _u() {
       c.aspect_ratio = arPreset;
     }
     // advanced timeline / download / media settings
-    c.timeline = {
+    c.timeline = { ...(this._config?.timeline || {}),
       enabled: this.querySelector('#timeline_enabled')?.checked !== false,
       default_minutes: Math.max(5,Math.min(60,Number(g('timeline_default_minutes')||10))),
       show_thumbnails: this.querySelector('#timeline_show_thumbnails')?.checked !== false,
