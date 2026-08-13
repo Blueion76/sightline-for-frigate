@@ -10264,7 +10264,7 @@ _u() {
       c.aspect_ratio = arPreset;
     }
     // advanced timeline / download / media settings
-    c.timeline = {
+    c.timeline = { ...(this._config?.timeline || {}),
       enabled: this.querySelector('#timeline_enabled')?.checked !== false,
       default_minutes: Math.max(5,Math.min(60,Number(g('timeline_default_minutes')||10))),
       show_thumbnails: this.querySelector('#timeline_show_thumbnails')?.checked !== false,
@@ -10318,7 +10318,7 @@ SightlineCardEditor.prototype._render = function(...args) {
     const wrap=document.createElement('div');
     wrap.id='v11-startup-options'; wrap.className='section';
     wrap.innerHTML=`<span class="field-label">Startup & timeline previews</span><div class="adv-grid"><label><span class="field-label">Default tab</span><select class="tf" id="default_tab"><option value="live" ${defaultTab==='live'?'selected':''}>Live</option><option value="clips" ${defaultTab==='clips'?'selected':''}>Clips</option><option value="recordings" ${defaultTab==='recordings'?'selected':''}>Recordings</option><option value="reviews" ${defaultTab==='reviews'?'selected':''}>Reviews</option></select></label><label class="chk-lbl"><input type="checkbox" id="autoplay_latest_clip" ${this._config?.autoplay_latest_clip?'checked':''}> Autoplay newest clip on startup</label><label><span class="field-label">Timeline thumbnail size (px)</span><input class="tf" id="timeline_thumbnail_size" type="number" min="48" max="140" value="${thumbnailSize}"></label></div>`;
-    this.appendChild(wrap);
+    (this.querySelector('.ed-wrap') || this).appendChild(wrap);
     for(const el of wrap.querySelectorAll('input,select')) el.addEventListener('change',()=>this._u());
   }
   return result;
