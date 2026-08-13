@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs",
-    "test": "node tests/smoke.mjs",
+    "test": "node tests/smoke.mjs && node tests/multiview.mjs",
     "verify": "npm run build && npm run check && npm test"
   },
   "engines": {
