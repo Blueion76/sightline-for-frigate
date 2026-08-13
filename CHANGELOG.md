@@ -13,7 +13,6 @@
 
 First public release as **Sightline for Frigate**.
 
-- Renamed the project from the development name `frigate-modern-hass-card`.
 - New Lovelace custom element: `custom:sightline-card`.
 - New HACS bundle: `dist/sightline-for-frigate.js`.
 - Preserves the existing Frigate live view, timeline, media browser, downloads, filters, two-way audio, visual editor, and responsive wide-dashboard layout.
