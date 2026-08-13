@@ -1,9 +1,9 @@
-// Sightline for Frigate v1.0.0
+// Sightline for Frigate v1.1.0
 // Generated from src/ by scripts/build.mjs. Do not edit dist directly.
 
 // ── src/constants.js ──
 // Shared constants and icon definitions.
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 
 const CARD_TAG = 'sightline-card';
 
@@ -1447,14 +1447,8 @@ function applyMethodGroups(target, ...groups) {
 }
 
 // ── src/card/core.js ──
-// Prototype methods grouped by responsibility.
 const coreMethods = {
 setConfig(config) {
-    // Be deliberately tolerant of older saved Lovelace configurations.
-    // HA can call setConfig while the editor is still normalizing a card; a
-    // hard throw here surfaces as the generic "Configuration error" card.
-    // Accept the historical camera_entity form plus cameras[], camera/entity
-    // aliases, and string camera entries.
     config = (config && typeof config === 'object') ? config : {};
     let cameras = [];
     const rootGo2rtc = (config.go2rtc && typeof config.go2rtc === 'object') ? config.go2rtc : {};
@@ -1462,40 +1456,19 @@ setConfig(config) {
       cameras = config.cameras.map(c => {
         if (typeof c === 'string') return { entity:c, name:null, frigate_client_id:null, go2rtc_stream:null };
         const g = (c?.go2rtc && typeof c.go2rtc === 'object') ? c.go2rtc : {};
-        return {
-          entity:c?.entity || c?.camera_entity || c?.camera || '',
-          name:c?.name||null,
-          frigate_client_id:c?.frigate_client_id || g.frigate_client_id || null,
-          go2rtc_stream:c?.go2rtc_stream || g.stream || null
-        };
+        return { entity:c?.entity || c?.camera_entity || c?.camera || '', name:c?.name||null, frigate_client_id:c?.frigate_client_id || g.frigate_client_id || null, go2rtc_stream:c?.go2rtc_stream || g.stream || null };
       }).filter(c => c.entity);
     }
     const singleEntity = config.camera_entity || config.entity || config.camera;
-    if (!cameras.length && singleEntity) {
-      cameras = [{
-        entity:singleEntity,
-        name:config.title||null,
-        frigate_client_id:config.frigate_client_id || rootGo2rtc.frigate_client_id || null,
-        go2rtc_stream:config.go2rtc_stream || rootGo2rtc.stream || null
-      }];
-    }
-    // Preserve a non-throwing configuration state. This is much friendlier in
-    // HA than throwing from setConfig; the rendered card explains what is
-    // missing and the editor can repair it.
+    if (!cameras.length && singleEntity) cameras = [{ entity:singleEntity, name:config.title||null, frigate_client_id:config.frigate_client_id || rootGo2rtc.frigate_client_id || null, go2rtc_stream:config.go2rtc_stream || rootGo2rtc.stream || null }];
     this._configError = cameras.length ? null : 'Select a Frigate camera entity.';
     if (!cameras.length) cameras = [{ entity:'', name:null, go2rtc_stream:null, frigate_client_id:null }];
     if (cameras.length > 4) cameras = cameras.slice(0, 4);
 
-    // v2.0.39: advanced settings are grouped into nested YAML objects so the
-    // visual editor and hand-written YAML share one predictable schema. Keep
-    // defaults conservative and clamp values that could otherwise create a
-    // pathological amount of DOM/media work.
     const timelineIn = (config.timeline && typeof config.timeline === 'object') ? config.timeline : {};
     const downloadIn = (config.download && typeof config.download === 'object') ? config.download : {};
     const mediaIn = (config.media && typeof config.media === 'object') ? config.media : {};
-    const num = (v, fallback, lo, hi) => {
-      const n=Number(v); return Number.isFinite(n) ? Math.max(lo,Math.min(hi,n)) : fallback;
-    };
+    const num = (v, fallback, lo, hi) => { const n=Number(v); return Number.isFinite(n) ? Math.max(lo,Math.min(hi,n)) : fallback; };
     const timeline = {
       enabled: timelineIn.enabled !== false,
       default_minutes: num(timelineIn.default_minutes,10,5,60),
@@ -1512,18 +1485,19 @@ setConfig(config) {
       glyph_max_px: num(timelineIn.glyph_max_px,30,12,48),
       max_glyphs: Math.round(num(timelineIn.max_glyphs,3,1,6)),
       max_thumbnails: Math.round(num(timelineIn.max_thumbnails,12,0,24)),
+      thumbnail_size: Math.round(num(timelineIn.thumbnail_size,84,48,140)),
     };
     if(timeline.glyph_max_px<timeline.glyph_min_px) timeline.glyph_max_px=timeline.glyph_min_px;
     const downloadMaxMinutes=num(downloadIn.max_range_minutes,120,1,720);
-    const download = {
-      default_range_seconds: Math.min(Math.round(downloadMaxMinutes*60),Math.round(num(downloadIn.default_range_seconds,60,2,1800))),
-      max_range_minutes: downloadMaxMinutes,
-    };
+    const download = { default_range_seconds: Math.min(Math.round(downloadMaxMinutes*60),Math.round(num(downloadIn.default_range_seconds,60,2,1800))), max_range_minutes: downloadMaxMinutes };
     const reviewedDefault=['all','unreviewed','reviewed'].includes(mediaIn.reviewed_default) ? mediaIn.reviewed_default : 'all';
     const media = { reviewed_default: reviewedDefault };
     const rawAspect=config.aspect_ratio==null || String(config.aspect_ratio).trim()==='' ? 'auto' : String(config.aspect_ratio).trim();
     const aspectValid = rawAspect==='auto' || /^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/.test(rawAspect) || (Number.isFinite(Number(rawAspect)) && Number(rawAspect)>0);
     const streamHeightNum=Number(config.stream_height);
+    const hiddenTabs = Array.isArray(config.hidden_tabs) ? config.hidden_tabs.filter(x=>['clips','recordings','reviews'].includes(String(x))) : [];
+    const requestedDefaultTab = ['live','clips','recordings','reviews'].includes(String(config.default_tab||'')) ? String(config.default_tab) : 'live';
+    const defaultTab = requestedDefaultTab !== 'live' && hiddenTabs.includes(requestedDefaultTab) ? 'live' : requestedDefaultTab;
 
     this._config = {
       cameras,
@@ -1532,51 +1506,28 @@ setConfig(config) {
       rotate_seconds: num(config.rotate_seconds,0,0,3600),
       rotate_on_load: config.rotate_on_load === true && cameras.length > 1,
       default_view: (config.default_view === 'grid' && cameras.length > 1) ? 'grid' : 'single',
-      hidden_tabs: Array.isArray(config.hidden_tabs) ? config.hidden_tabs.filter(x=>['clips','recordings','reviews'].includes(String(x))) : [],
-      // Optional explicit live-player height in viewport-height units. When set,
-      // this intentionally overrides aspect_ratio for vertical sizing. When blank,
-      // aspect_ratio is authoritative. Keeping those two modes mutually exclusive
-      // makes both editor controls deterministic instead of having a max-height cap
-      // silently mask an aspect-ratio change.
+      hidden_tabs: hiddenTabs,
+      default_tab: defaultTab,
+      autoplay_latest_clip: config.autoplay_latest_clip === true,
       stream_height: Number.isFinite(streamHeightNum) && streamHeightNum>0 ? Math.max(20,Math.min(100,streamHeightNum)) : null,
-      // 'webrtc' (default) or 'hls'. WebRTC needs a backend that actually offers it
-      // (go2rtc bundled in Frigate 0.13+, or the RTSPtoWebRTC integration) — fall back
-      // to 'hls' if your camera's stream won't start.
       stream_type: config.stream_type === 'hls' ? 'hls' : 'webrtc',
-      // "16:9", "4:3", "1:1", "21:9", a custom "W:H"/"W/H" ratio, or "auto" for none.
       aspect_ratio: aspectValid ? rawAspect : 'auto',
-      // Lets the user drag the live view vertically. A runtime drag height has
-      // the same precedence as stream_height and therefore overrides aspect_ratio
-      // until the card is rebuilt/reset.
       stream_resizable: config.stream_resizable === true,
       theme: ['light','dark','auto'].includes(config.theme) ? config.theme : 'dark',
       accent_color: config.accent_color || null,
       bg_color: config.bg_color || null,
-      // Surface-only transparency. 0 preserves the existing material exactly;
-      // 100 removes the card/panel fills while leaving text, controls and video
-      // pixels fully opaque. Accept the older descriptive aliases if somebody
-      // hand-wrote them while testing a development build.
       transparency: num(config.transparency ?? config.card_transparency ?? config.background_transparency,0,0,100),
       timeline,
       download,
       media,
-      // v2.0.27 network boundary: the browser never talks to Frigate/go2rtc
-      // hosts directly. Legacy go2rtc_url/frigate_url values in saved Lovelace
-      // YAML are intentionally ignored; only the HA Frigate integration proxy is used.
       frigate_client_id: config.frigate_client_id || rootGo2rtc.frigate_client_id || cameras.find(c => c.frigate_client_id)?.frigate_client_id || null,
       two_way_audio: config.two_way_audio === true,
-      // Match Advanced Camera Card's microphone lifecycle: keep the WebRTC
-      // session alive briefly after release, but stop sending microphone audio.
-      two_way_audio_disconnect_seconds: Number.isFinite(Number(config.two_way_audio_disconnect_seconds))
-        ? Math.max(0, Number(config.two_way_audio_disconnect_seconds)) : 90,
+      two_way_audio_disconnect_seconds: Number.isFinite(Number(config.two_way_audio_disconnect_seconds)) ? Math.max(0, Number(config.two_way_audio_disconnect_seconds)) : 90,
     };
-    this._browseOpen = false; // legacy bottom browser was removed; galleries own their visibility
+    this._browseOpen = false;
     this._showReviewed = this._config.media.reviewed_default !== 'unreviewed';
     if(this._mediaFilter) this._mediaFilter.reviewed=this._config.media.reviewed_default;
-    if (this._galleryMode && this._config.hidden_tabs.includes(this._galleryMode)) {
-      this._galleryMode='';
-      this._tab='live';
-    }
+    if (this._galleryMode && this._config.hidden_tabs.includes(this._galleryMode)) { this._galleryMode=''; this._tab='live'; }
     for (const c of cameras) { if (!this._camCache[c.entity]) this._camCache[c.entity] = mkCamState(); }
     this._renderShell();
     this._setupMicrophoneDetection();
@@ -1586,34 +1537,38 @@ set hass(hass) {
     this._hass = hass;
     if (!this._config) return;
     if (!this._started) { this._started = true; this._start(); return; }
-    // keep active stream in sync
     if (this._engine) {
       try { this._engine.hass = hass; } catch(_) {}
-      // Only update stateObj when entity state actually changes (e.g. offline→online).
-      // Resetting stateObj on every hass update restarts the stream and resets muted state.
       const ent = this._activeCam?.entity;
       const newState = hass.states[ent]?.state;
       if (ent && newState !== this._lastEngineState) {
         this._lastEngineState = newState;
-        if ('stateObj' in this._engine) {
-          try { this._engine.stateObj = this._streamStateObj(ent); } catch(_) {}
-        }
+        if ('stateObj' in this._engine) { try { this._engine.stateObj = this._streamStateObj(ent); } catch(_) {} }
       }
     }
     if(!(this._mediaPickerActive && this._galleryMode)) {
       this._syncStatus();
-      if (this._config.theme === 'auto') this._applyCardStyle(); // re-evaluate HA dark mode
+      if (this._config.theme === 'auto') this._applyCardStyle();
     }
   },
 
 get _activeCam() { return this._config?.cameras[this._activeCamIdx] || this._config?.cameras[0]; },
 
+async _applyInitialMediaState() {
+    if(this._initialMediaStateApplied) return;
+    this._initialMediaStateApplied=true;
+    const tab=this._config?.default_tab||'live';
+    if(tab==='live') return;
+    await this._setGalleryMode(tab);
+    if(tab!=='clips' || !this._config?.autoplay_latest_clip || this._galleryMode!=='clips') return;
+    const source=this._eventsMode==='all'?this._allDisplayEvents():this._events;
+    const latest=this._filterMediaEvents(source).filter(ev=>ev?.has_clip).sort((a,b)=>Number(b.start_time||0)-Number(a.start_time||0))[0];
+    if(latest) await this._showClip(latest);
+  },
+
 _isEditorPreview() {
     let node=this;
-    const editorTags=new Set([
-      'hui-card-preview','hui-dialog-edit-card','hui-card-element-editor',
-      'hui-card-editor','hui-dialog-edit-card'
-    ]);
+    const editorTags=new Set(['hui-card-preview','hui-dialog-edit-card','hui-card-element-editor','hui-card-editor','hui-dialog-edit-card']);
     for(let i=0;i<14 && node;i++){
       const tag=String(node.tagName||'').toLowerCase();
       if(editorTags.has(tag)) return true;
@@ -1627,38 +1582,22 @@ _isEditorPreview() {
   },
 
 getCardSize() { return 10; },
-
 getGridSize() { return { columns: 2, rows: 3 }; },
 
 disconnectedCallback() {
-    this._stopRotate();
-    this._cancelActivePlayback();
-    this._stopTalk();
+    this._stopRotate(); this._cancelActivePlayback(); this._stopTalk();
     if (this._refresh) clearInterval(this._refresh);
     if (this._timelineClockTimer) clearInterval(this._timelineClockTimer);
-    clearTimeout(this._timelineDataTimer);
-    clearTimeout(this._timelineDynamicTimer);
-    this._timelineDynamicTimer=null;
-    this._timelineDynamicPending=false;
-    clearTimeout(this._wt);
-    clearTimeout(this._mediaPickerApplyTimer);
-    clearTimeout(this._mediaPickerReleaseTimer);
-    this._mediaPickerActive=false;
-    this._mediaPickerActiveId='';
-    this._mediaPickerPendingFilterRender=false;
-    this._removeLiveFsMirror();
+    clearTimeout(this._timelineDataTimer); clearTimeout(this._timelineDynamicTimer); this._timelineDynamicTimer=null; this._timelineDynamicPending=false;
+    clearTimeout(this._wt); clearTimeout(this._mediaPickerApplyTimer); clearTimeout(this._mediaPickerReleaseTimer);
+    this._mediaPickerActive=false; this._mediaPickerActiveId=''; this._mediaPickerPendingFilterRender=false; this._removeLiveFsMirror();
     if (this._scrubAbort) { try { this._scrubAbort.abort(); } catch(_) {} this._scrubAbort=null; }
     if (this._scrollAbort) { try { this._scrollAbort.abort(); } catch(_) {} this._scrollAbort=null; }
-    ++this._timelineLoadSeq;
-    ++this._timelineDataSeq;
-    ++this._timelineSeekSeq;
+    ++this._timelineLoadSeq; ++this._timelineDataSeq; ++this._timelineSeekSeq;
     if (this._unsub) { try { this._unsub.then(u=>u&&u()); } catch(_) {} this._unsub=null; }
-    if (this._timelineResizeRaf) cancelAnimationFrame(this._timelineResizeRaf);
-    this._timelineResizeRaf=0;
+    if (this._timelineResizeRaf) cancelAnimationFrame(this._timelineResizeRaf); this._timelineResizeRaf=0;
     if (this._ro) this._ro.disconnect();
-    if (this._micDeviceChangeHandler && navigator.mediaDevices?.removeEventListener) {
-      try { navigator.mediaDevices.removeEventListener('devicechange', this._micDeviceChangeHandler); } catch (_) {}
-    }
+    if (this._micDeviceChangeHandler && navigator.mediaDevices?.removeEventListener) { try { navigator.mediaDevices.removeEventListener('devicechange', this._micDeviceChangeHandler); } catch (_) {} }
     this._micDeviceChangeHandler=null;
   },
 
@@ -1666,46 +1605,26 @@ async _start() {
     if (this._configError || !this._activeCam?.entity) { this._renderAll(); return; }
     await this._discoverAll();
     this._setupMicrophoneDetection();
-    // Populate filter labels/zones from Frigate itself rather than from any
-    // install-specific list baked into the card. This runs independently from
-    // the visible 24h browser window so filters remain useful after quiet days.
     this._loadFrigateFilterMetadata();
     const now = Math.floor(Date.now()/1000);
-    // The browser/data history window is configurable with window_hours, while
-    // the timeline launches on its configured compact viewport around now. The
-    // initial load still preloads the browser window so media tabs are ready.
     this._timelineFocusTs = now;
     const initialTimelineSpan=this._timelineDefaultSpanSeconds();
-    this._winStart = now - initialTimelineSpan/2;
-    this._winEnd = now + initialTimelineSpan/2;
-    this._timelineZoom = 3600/initialTimelineSpan;
-    this._timelineFollowingLive = true;
-    this._timelineWasLiveBeforeGesture = false;
-    this._timelineLiveCrossed = false;
-    if (this._config.default_view === 'grid' && this._config.cameras.length > 1) {
-      this._setViewMode('grid');
-    }
+    this._winStart = now - initialTimelineSpan/2; this._winEnd = now + initialTimelineSpan/2; this._timelineZoom = 3600/initialTimelineSpan;
+    this._timelineFollowingLive = true; this._timelineWasLiveBeforeGesture = false; this._timelineLiveCrossed = false;
+    if (this._config.default_view === 'grid' && this._config.cameras.length > 1) this._setViewMode('grid');
     await this._mountEngine();
     await this._loadWindow(true, true);
-    this._loadCalendar();
-    this._subscribe();
+    await this._applyInitialMediaState();
+    this._loadCalendar(); this._subscribe();
     this._refresh = setInterval(() => { if (this._isNowWindow()) this._loadWindow(true); this._loadFrigateFilterMetadata(); }, this._config.refresh_seconds*1000);
-    // Keep the timeline's live marker and HH:MM:SS scrubber timestamp synchronized
-    // with the wall clock without rebuilding the timeline DOM. While the scrubber
-    // is parked on LIVE, its timestamp follows the clock every second. Once the
-    // user scrubs away, the selected playback timestamp remains stable.
     if (this._timelineClockTimer) clearInterval(this._timelineClockTimer);
     this._timelineClockTimer = setInterval(() => {
       if (!this.isConnected || this._galleryMode || this._timelineInteracting) return;
       this._updateTimelineLive();
-      // LIVE is continuously moving wall-clock time. Keep its Frigate data tail
-      // moving too instead of waiting for the slower full-card refresh timer.
       if (this._timelineFollowingLive) this._scheduleTimelineDynamicData('live');
     }, 1000);
-    const shouldRotate = this._config.rotate_on_load === true;
-    if (shouldRotate && this._config.cameras.length > 1) this._startRotate();
-    this._setupResizeObserver();
-    this._stabilizeInitialTimeline();
+    if (this._config.rotate_on_load === true && this._config.cameras.length > 1) this._startRotate();
+    this._setupResizeObserver(); this._stabilizeInitialTimeline();
   }
 };
 
@@ -9570,121 +9489,71 @@ constructor() {
     super();
     this.attachShadow({ mode:'open' });
     this._hass = null; this._config = null; this._started = false;
-    this._activeCamIdx = 0;
-    this._camCache = {};     // entity → mkCamState()
-    this._viewMode = 'single';   // 'single' | 'grid'
-    this._eventsMode = 'camera'; // 'camera' | 'all'
-    // active display data
+    this._activeCamIdx = 0; this._camCache = {}; this._viewMode = 'single'; this._eventsMode = 'camera';
     this._events = []; this._recordings = []; this._recordingsLoaded = false; this._recordingsRangeStart = null; this._recordingsRangeEnd = null; this._reviews = []; this._kept = [];
-    // UI
-    this._tab = 'live'; this._playing = null;
-    this._browseOpen = false;
-    this._winEnd = 0; this._winStart = 0;
-    this._timelineSelected = null;
-    this._timelineFocusTs = null;
-    this._loading = false; this._exhausted = false;
-    this._daysWithActivity = new Set();
-    this._filterLabel = 'all'; this._filterFace = 'all'; this._filterZone = 'all'; this._favOnly = false;
-    this._calMonth = null;
-    this._engine = null; this._unsub = null;
-    this._rotateTimer = null; this._cardWidth = 0;
-    this._playSeq = 0;
-    this._playingHour = null;
-    this._timelineLoadSeq = 0;
-    this._timelineDataSeq = 0;
-    // Moving-window data follow. Unlike _timelineDataTimer (settled debounce),
-    // this is a throttle: it keeps fetching newly exposed timeline ranges while
-    // a gesture is still in progress and periodically refreshes the LIVE tail.
-    this._timelineDynamicTimer = null;
-    this._timelineDynamicTimerMode = '';
-    this._timelineDynamicActive = false;
-    this._timelineDynamicPending = false;
-    this._timelineDynamicLastAt = 0;
-    this._recordingsLoadedAt = 0;
-    this._timelineSeekSeq = 0;
-    this._playbackLoadSeq = 0;
-    this._playbackTimer = null;
-    this._scrubAbort = null;
-    this._scrollAbort = null;
-    this._scrubTarget = null;
-    this._timelineZoom = 6; // 6 = 10 minutes; higher = more zoomed in
-    this._timelineZoomMin = 1/24; // 24 hour view
-    this._timelineZoomMax = 12;   // 5 minute view
-    this._activePlaybackCleanup = null;
-    // Stable media session: keep one player alive while seeking within the
-    // same source. This mirrors Advanced Camera Card's separation between
-    // media state and view/timeline state, preventing player teardown/recreate
-    // churn during scrubbing.
-    this._playbackSession = null;
-    this._streamMuted = true; // start muted so autoplay is allowed; user gesture/audio button can unmute
-    this._showReviewed = false; // reviews: hide reviewed by default
+    this._tab = 'live'; this._playing = null; this._initialMediaStateApplied = false; this._playbackReturnViewMode = null;
+    this._browseOpen = false; this._winEnd = 0; this._winStart = 0; this._timelineSelected = null; this._timelineFocusTs = null;
+    this._loading = false; this._exhausted = false; this._daysWithActivity = new Set();
+    this._filterLabel = 'all'; this._filterFace = 'all'; this._filterZone = 'all'; this._favOnly = false; this._calMonth = null;
+    this._engine = null; this._unsub = null; this._rotateTimer = null; this._cardWidth = 0; this._playSeq = 0; this._playingHour = null;
+    this._timelineLoadSeq = 0; this._timelineDataSeq = 0; this._timelineDynamicTimer = null; this._timelineDynamicTimerMode = ''; this._timelineDynamicActive = false; this._timelineDynamicPending = false; this._timelineDynamicLastAt = 0;
+    this._recordingsLoadedAt = 0; this._timelineSeekSeq = 0; this._playbackLoadSeq = 0; this._playbackTimer = null; this._scrubAbort = null; this._scrollAbort = null; this._scrubTarget = null;
+    this._timelineZoom = 6; this._timelineZoomMin = 1/24; this._timelineZoomMax = 12; this._activePlaybackCleanup = null; this._playbackSession = null;
+    this._streamMuted = true; this._showReviewed = false;
     this._mediaFilter = { camera:'all', label:'all', face:'all', zone:'all', favorites:false, reviewed:'all', severity:'all', duration:'all', date:'all', timeStart:'', timeEnd:'' };
-    // Native date/time pickers (especially iOS/WebKit) are presented outside
-    // normal page layout but remain anchored to the original <input> node. Any
-    // background gallery/filter/layout mutation can dismiss the system picker.
-    // Keep a sticky interaction lock and freeze the gallery DOM while a picker
-    // owns the screen; Clips/Recordings refresh asynchronously far more often
-    // than Reviews, so preserving only the input node is not sufficient on iOS.
-    this._mediaPickerApplyTimer = null;
-    this._mediaPickerReleaseTimer = null;
-    this._mediaPickerActive = false;
-    this._mediaPickerActiveId = '';
-    this._mediaPickerPendingFilterRender = false;
-    this._mediaPickerPendingGalleryRender = false;
-    this._liveFsMirror = null;
-    this._liveFsRecoverySeq = 0;
-    // Timeline download trim mode. Start/end are absolute Frigate timestamps;
-    // the picker itself is rendered inside the timeline so it follows zoom and
-    // uses exactly the same timestamp mapping as normal scrubbing.
-    this._downloadRange = null;
-    this._recordingBrowse = []; // hourly recording summary used by the Recordings browser
-    this._domCache = {}; // querySelector result cache — cleared on re-render
-    this._clickListenerBound = false;
-    this._mediaImageListenerBound = false;
-    this._livePseudoFullscreen = false;
-    this._timelineThumbCache = new Map(); // event id -> stable thumbnail URL
-    this._timelineEventCache = new Map(); // event id -> latest Frigate event payload
-    this._timelineDataDirty = false;
-    // two-way audio (talk) state
-    this._talkActive = false;
-    this._talkPC = null; this._talkWS = null; this._talkMic = null; this._talkAudio = null; this._talkUsingLivePC = false;
-    this._talkMicReadyPromise = null;
-    this._go2rtcMountPromise = null;
-    // ACC-style microphone lifecycle: desired mute is separate from stream existence.
-    this._micDesiredMute = true;
-    this._micForbidden = false;
-    // `null` means device detection has not completed yet. The Talk button is
-    // deliberately hidden until an actual audioinput device is enumerated.
-    this._microphonePresent = null;
-    this._micDeviceChangeHandler = null;
-    this._micDisconnectTimer = null;
-    this._go2rtcLive = null;
-    this._rtcDebug = { answer: '', candidates: [], tracks: [], errors: [] };
-    this._liveAudioEnabled = false;
-    this._liveAudioAvailable = false;
+    this._mediaPickerApplyTimer = null; this._mediaPickerReleaseTimer = null; this._mediaPickerActive = false; this._mediaPickerActiveId = ''; this._mediaPickerPendingFilterRender = false; this._mediaPickerPendingGalleryRender = false;
+    this._liveFsMirror = null; this._liveFsRecoverySeq = 0; this._downloadRange = null; this._recordingBrowse = []; this._domCache = {}; this._clickListenerBound = false; this._mediaImageListenerBound = false; this._livePseudoFullscreen = false;
+    this._timelineThumbCache = new Map(); this._timelineEventCache = new Map(); this._timelineDataDirty = false;
+    this._talkActive = false; this._talkPC = null; this._talkWS = null; this._talkMic = null; this._talkAudio = null; this._talkUsingLivePC = false; this._talkMicReadyPromise = null; this._go2rtcMountPromise = null;
+    this._micDesiredMute = true; this._micForbidden = false; this._microphonePresent = null; this._micDeviceChangeHandler = null; this._micDisconnectTimer = null;
+    this._go2rtcLive = null; this._rtcDebug = { answer: '', candidates: [], tracks: [], errors: [] }; this._liveAudioEnabled = false; this._liveAudioAvailable = false;
   }
-
 static getConfigElement() { return document.createElement(CARD_TAG+'-editor'); }
-
 static getStubConfig() { return { camera_entity:'camera.front_door' }; }
 }
 
-applyMethodGroups(SightlineCard.prototype,
-  coreMethods,
-  liveMethods,
-  talkMethods,
-  dataMethods,
-  renderShellMethods,
-  layoutMethods,
-  browserMethods,
-  eventPlaybackMethods,
-  recordingPlaybackMethods,
-  actionMethods,
-  timelineInteractionMethods,
-  timelineRenderMethods,
-  listMethods,
-  downloadMethods
-);
+applyMethodGroups(SightlineCard.prototype, coreMethods, liveMethods, talkMethods, dataMethods, renderShellMethods, layoutMethods, browserMethods, eventPlaybackMethods, recordingPlaybackMethods, actionMethods, timelineInteractionMethods, timelineRenderMethods, listMethods, downloadMethods);
+
+const baseEnterPlayback = SightlineCard.prototype._enter;
+const baseShowLive = SightlineCard.prototype._showLive;
+const baseRenderTimeline = SightlineCard.prototype._renderTimeline;
+SightlineCard.prototype._openInGridSlot = function(id) { return this._open(id); };
+SightlineCard.prototype._enter = function(...args) {
+  const fromGrid=this._viewMode==='grid'; if(fromGrid && !this._playbackReturnViewMode) this._playbackReturnViewMode='grid';
+  const result=baseEnterPlayback.apply(this,args);
+  const feed=this.shadowRoot.querySelector('.workspace-feed'), timeline=this.shadowRoot.querySelector('.workspace-timeline'), media=this.shadowRoot.querySelector('.workspace-media'), layout=this.shadowRoot.querySelector('.layout'), engWrap=this.shadowRoot.querySelector('#eng-wrap'), grid=this.shadowRoot.querySelector('#cam-grid');
+  if(fromGrid){
+    if(feed){ feed.dataset.playbackGridColumn=feed.style.gridColumn||''; feed.dataset.playbackGridRow=feed.style.gridRow||''; feed.style.gridColumn='1 / -1'; feed.style.gridRow='1'; }
+    if(timeline){ timeline.dataset.playbackDisplay=timeline.style.display||''; timeline.style.display='none'; }
+    if(media){ media.dataset.playbackDisplay=media.style.display||''; media.style.display='none'; }
+    if(layout){ layout.dataset.playbackGridTemplateColumns=layout.style.gridTemplateColumns||''; layout.dataset.playbackGridTemplateAreas=layout.style.gridTemplateAreas||''; layout.style.gridTemplateColumns='minmax(0, 1fr)'; layout.style.gridTemplateAreas='"feed"'; }
+    if(engWrap){ engWrap.dataset.playbackWidth=engWrap.style.width||''; engWrap.dataset.playbackMaxWidth=engWrap.style.maxWidth||''; engWrap.style.display=''; engWrap.style.width='100%'; engWrap.style.maxWidth='none'; }
+    if(grid) grid.style.display='none';
+  }
+  if(engWrap){
+    let back=engWrap.querySelector('#playback-back-live');
+    if(!back){ back=document.createElement('button'); back.type='button'; back.id='playback-back-live'; back.style.cssText='position:absolute;left:12px;top:12px;z-index:80;display:inline-flex;align-items:center;gap:7px;min-height:36px;padding:7px 11px;border:1px solid rgba(255,255,255,.24);border-radius:999px;background:rgba(16,16,18,.72);color:#fff;font:650 12px/1 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;box-shadow:0 5px 18px rgba(0,0,0,.30);backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);cursor:pointer;appearance:none;-webkit-appearance:none'; engWrap.appendChild(back); }
+    const label=fromGrid?'Back to Multiview':'Back to Live'; back.hidden=false; back.style.display='inline-flex'; back.innerHTML=`${ICONS.back}<span>${label}</span>`; back.title=label; back.setAttribute('aria-label',label); back.onclick=()=>this._showLive();
+  }
+  return result;
+};
+SightlineCard.prototype._showLive = function(...args) {
+  const returnToGrid=this._playbackReturnViewMode==='grid'; const result=baseShowLive.apply(this,args); this._playbackReturnViewMode=null;
+  const feed=this.shadowRoot.querySelector('.workspace-feed'), timeline=this.shadowRoot.querySelector('.workspace-timeline'), media=this.shadowRoot.querySelector('.workspace-media'), layout=this.shadowRoot.querySelector('.layout'), engWrap=this.shadowRoot.querySelector('#eng-wrap'), grid=this.shadowRoot.querySelector('#cam-grid'), back=this.shadowRoot.querySelector('#playback-back-live');
+  if(back){ back.hidden=true; back.style.display='none'; }
+  if(feed){ feed.style.gridColumn=feed.dataset.playbackGridColumn||''; feed.style.gridRow=feed.dataset.playbackGridRow||''; delete feed.dataset.playbackGridColumn; delete feed.dataset.playbackGridRow; }
+  if(timeline && 'playbackDisplay' in timeline.dataset){ timeline.style.display=timeline.dataset.playbackDisplay||''; delete timeline.dataset.playbackDisplay; }
+  if(media && 'playbackDisplay' in media.dataset){ media.style.display=media.dataset.playbackDisplay||''; delete media.dataset.playbackDisplay; }
+  if(layout){ layout.style.gridTemplateColumns=layout.dataset.playbackGridTemplateColumns||''; layout.style.gridTemplateAreas=layout.dataset.playbackGridTemplateAreas||''; delete layout.dataset.playbackGridTemplateColumns; delete layout.dataset.playbackGridTemplateAreas; }
+  if(engWrap && 'playbackWidth' in engWrap.dataset){ engWrap.style.width=engWrap.dataset.playbackWidth||''; engWrap.style.maxWidth=engWrap.dataset.playbackMaxWidth||''; delete engWrap.dataset.playbackWidth; delete engWrap.dataset.playbackMaxWidth; }
+  if(returnToGrid){ if(engWrap) engWrap.style.display='none'; if(grid) grid.style.display=''; this._eventsMode='all'; this._mountGrid(); this._renderCamSwitcher(); }
+  this._syncResponsiveWorkspace(); return result;
+};
+SightlineCard.prototype._renderTimeline = function(...args) {
+  const result=baseRenderTimeline.apply(this,args); const h=Math.max(48,Math.min(140,Math.round(Number(this._config?.timeline?.thumbnail_size ?? 84)))), w=Math.max(154,Math.min(420,Math.round(h*3.15)));
+  for(const preview of this.shadowRoot?.querySelectorAll?.('.t-preview')||[]){ preview.style.setProperty('height',`${h}px`,'important'); preview.style.setProperty('width',`min(${w}px, calc(100% - var(--tl-content) - 10px))`,'important'); preview.style.setProperty('max-width',`${w}px`,'important'); }
+  return result;
+};
 
 // ── src/editor/methods.js ──
 // Visual editor behavior.
@@ -10179,6 +10048,34 @@ _dispatch() { this.dispatchEvent(new CustomEvent('config-changed',{detail:{confi
 // ── src/editor/SightlineCardEditor.js ──
 class SightlineCardEditor extends HTMLElement {}
 applyMethodGroups(SightlineCardEditor.prototype, editorMethods);
+
+const baseRender = SightlineCardEditor.prototype._render;
+const baseUpdate = SightlineCardEditor.prototype._u;
+
+SightlineCardEditor.prototype._render = function(...args) {
+  const result=baseRender.apply(this,args);
+  if(!this.querySelector('#v11-startup-options')) {
+    const defaultTab=['live','clips','recordings','reviews'].includes(this._config?.default_tab) ? this._config.default_tab : 'live';
+    const thumbnailSize=Math.max(48,Math.min(140,Number(this._config?.timeline?.thumbnail_size ?? 84)));
+    const wrap=document.createElement('div');
+    wrap.id='v11-startup-options'; wrap.className='section';
+    wrap.innerHTML=`<span class="field-label">Startup & timeline previews</span><div class="adv-grid"><label><span class="field-label">Default tab</span><select class="tf" id="default_tab"><option value="live" ${defaultTab==='live'?'selected':''}>Live</option><option value="clips" ${defaultTab==='clips'?'selected':''}>Clips</option><option value="recordings" ${defaultTab==='recordings'?'selected':''}>Recordings</option><option value="reviews" ${defaultTab==='reviews'?'selected':''}>Reviews</option></select></label><label class="chk-lbl"><input type="checkbox" id="autoplay_latest_clip" ${this._config?.autoplay_latest_clip?'checked':''}> Autoplay newest clip on startup</label><label><span class="field-label">Timeline thumbnail size (px)</span><input class="tf" id="timeline_thumbnail_size" type="number" min="48" max="140" value="${thumbnailSize}"></label></div>`;
+    this.appendChild(wrap);
+    for(const el of wrap.querySelectorAll('input,select')) el.addEventListener('change',()=>this._u());
+  }
+  return result;
+};
+
+SightlineCardEditor.prototype._u = function(...args) {
+  const requested=this.querySelector('#default_tab')?.value;
+  const autoplay=this.querySelector('#autoplay_latest_clip')?.checked === true;
+  const thumb=Number(this.querySelector('#timeline_thumbnail_size')?.value);
+  if(requested || Number.isFinite(thumb)) {
+    const hidden=Array.isArray(this._config?.hidden_tabs)?this._config.hidden_tabs:[];
+    this._config={...(this._config||{}),default_tab:requested && requested!=='live' && hidden.includes(requested)?'live':(requested||'live'),autoplay_latest_clip:autoplay,timeline:{...(this._config?.timeline||{}),...(Number.isFinite(thumb)?{thumbnail_size:Math.max(48,Math.min(140,Math.round(thumb)))}:{})}};
+  }
+  return baseUpdate.apply(this,args);
+};
 
 // ── src/index.js ──
 if (!customElements.get(CARD_TAG)) {
