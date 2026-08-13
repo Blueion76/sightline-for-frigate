@@ -12,12 +12,15 @@ Sightline brings your Frigate cameras, live view, timeline, clips, recordings, r
 - WebRTC live view with HLS fallback
 - Continuous recording playback and timeline seeking
 - Clips, Recordings, and Reviews browsers
+- Configurable startup tab with optional autoplay of the newest retained clip
 - Frigate detection thumbnails and Material Design detection glyphs
+- Configurable timeline thumbnail size
 - Filters for labels, zones, review state, and recognized faces
 - Timeline range selection for downloading recording clips
 - Two-way audio for compatible go2rtc camera streams
 - Multi-camera support for up to 4 Frigate cameras
 - Single-camera, grid, and auto-rotation modes
+- Full-card clip playback from grid/Multiview with an obvious return-to-live control
 - Responsive wide-screen layout: video, timeline, and media browser can sit side-by-side
 - iOS-inspired translucent/glass styling with configurable theme, tint, accent, and transparency
 - Home Assistant visual card editor plus full YAML configuration
@@ -131,6 +134,8 @@ cameras:
 
 With multiple cameras configured you can switch cameras, use grid mode, or enable automatic rotation. Camera filters are hidden automatically when the card is operating in a single-camera context.
 
+When you open a clip while in grid/Multiview, Sightline temporarily gives playback the full card instead of squeezing the clip into one grid tile. Use the **Back to Multiview** control over the player to return to the camera grid.
+
 ### Multiple Frigate instances
 
 If Home Assistant has more than one Frigate integration instance, set the Frigate client/instance ID on each camera that needs it:
@@ -209,6 +214,7 @@ timeline:
   enabled: true
   default_minutes: 10
   show_thumbnails: true
+  thumbnail_size: 84
   show_glyphs: true
   show_legend: true
   show_zoom_controls: true
@@ -230,6 +236,7 @@ timeline:
 | `enabled` | `true` | Show the timeline on Live. |
 | `default_minutes` | `10` | Initial timeline window in minutes. |
 | `show_thumbnails` | `true` | Show event/review thumbnails. |
+| `thumbnail_size` | `84` | Timeline thumbnail height in pixels. Valid range: 48–140. |
 | `show_glyphs` | `true` | Show detection icons. |
 | `show_legend` | `true` | Show the detection legend. |
 | `show_zoom_controls` | `true` | Show timeline zoom controls. |
@@ -273,6 +280,22 @@ Sightline includes separate media browsers for:
 - **Recordings** — continuous recording playback.
 - **Reviews** — Frigate review segments and review state.
 
+You can choose which tab is shown when the card first loads:
+
+```yaml
+default_tab: clips
+```
+
+Valid values are `live`, `clips`, `recordings`, and `reviews`. If the configured default tab is also listed in `hidden_tabs`, Sightline falls back to Live.
+
+When `default_tab: clips` is used, Sightline can optionally open and autoplay the newest retained clip after the initial media load:
+
+```yaml
+autoplay_latest_clip: true
+```
+
+This startup autoplay runs once and only selects an event that Frigate reports as having a retained clip.
+
 The initial browser history range is controlled with:
 
 ```yaml
@@ -291,6 +314,8 @@ Reviews can default to all, reviewed, or unreviewed:
 media:
   reviewed_default: all
 ```
+
+When recorded playback is active, Sightline displays a clear **Back to Live** control over the player. If the clip was opened from grid/Multiview, the control becomes **Back to Multiview** and restores the grid.
 
 ## Download a recording range
 
@@ -362,6 +387,8 @@ If `bg_color` is set, that color becomes the tint for the translucent card surfa
 | `window_hours` | `24` | Initial media-browser history range. |
 | `refresh_seconds` | `45` | Frigate metadata/event refresh interval. Minimum 15 seconds. |
 | `default_view` | `single` | `single` or `grid` when multiple cameras exist. |
+| `default_tab` | `live` | Initial tab: `live`, `clips`, `recordings`, or `reviews`. |
+| `autoplay_latest_clip` | `false` | When starting on Clips, automatically open the newest retained clip once. |
 | `rotate_on_load` | `false` | Begin automatic camera rotation. |
 | `rotate_seconds` | `0` | Rotation interval; `0` uses Sightline's 30-second default. |
 | `hidden_tabs` | `[]` | Hide `clips`, `recordings`, and/or `reviews`. Live is always available. |
@@ -398,6 +425,8 @@ accent_color: "#ffffff"
 bg_color: "#020818"
 theme: dark
 default_view: single
+default_tab: live
+autoplay_latest_clip: false
 rotate_on_load: false
 hidden_tabs: []
 stream_height: 40
@@ -410,6 +439,7 @@ timeline:
   enabled: true
   default_minutes: 10
   show_thumbnails: true
+  thumbnail_size: 84
   show_glyphs: true
   show_legend: true
   show_zoom_controls: true
@@ -506,4 +536,3 @@ If you find a bug, include as much of the following as possible when opening a G
 - Browser console error, if one is present
 
 For Frigate installation or Frigate integration problems that also occur outside Sightline, use the Frigate documentation/support channels. For behavior specific to this card, open an issue in the Sightline repository.
-
