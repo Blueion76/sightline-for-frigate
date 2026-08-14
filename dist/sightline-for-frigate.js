@@ -1,9 +1,9 @@
-// Sightline for Frigate v1.1.2
+// Sightline for Frigate v1.1.3
 // Generated from src/ by scripts/build.mjs. Do not edit dist directly.
 
 // ── src/constants.js ──
 // Shared constants and icon definitions.
-const VERSION = '1.1.2';
+const VERSION = '1.1.3';
 
 const CARD_TAG = 'sightline-card';
 
@@ -7625,11 +7625,33 @@ _pickDay(ds) {
       ? Number(this._timelineDefaultSpanSeconds()) : 10*60;
     const span=Number.isFinite(currentSpan)&&currentSpan>0 ? currentSpan : Math.max(1,fallbackSpan||10*60);
 
-    // Calendar navigation must also leave LIVE-follow mode. Otherwise the next
-    // moving-LIVE tick can immediately translate the newly selected historical
-    // date back toward now even though the calendar load itself succeeded.
-    clearTimeout(this._wt);
-    this._wt=null;
+    // Calendar navigation is a hard ownership boundary. After a scrub there
+    // may still be a wheel-settle callback, a debounced timeline load, a
+    // moving-window refresh, or an active recording/media clock waiting to
+    // update the playhead. Any of those can immediately translate the timeline
+    // back to the old scrub position after the new date is applied. Cancel the
+    // queued work and invalidate every in-flight generation before moving the
+    // viewport so repeated date selections are deterministic.
+    clearTimeout(this._wt); this._wt=null;
+    clearTimeout(this._timelineDataTimer); this._timelineDataTimer=null;
+    this._timelineDataSeq=(Number(this._timelineDataSeq)||0)+1;
+    clearTimeout(this._timelineDynamicTimer); this._timelineDynamicTimer=null;
+    this._timelineDynamicTimerMode='';
+    this._timelineDynamicPending=false;
+    this._timelineLoadSeq=(Number(this._timelineLoadSeq)||0)+1;
+
+    // Stop single-camera and synchronized Multiview recording playback before
+    // changing dates. Their media clocks intentionally drive
+    // _updateTimelinePlaybackTime(); leaving either alive would let the old
+    // recording re-anchor the freshly selected calendar date on its next tick.
+    if(typeof this._invalidatePlaybackForTimelineMove==='function') {
+      this._invalidatePlaybackForTimelineMove();
+    } else if(typeof this._cancelActivePlayback==='function') {
+      this._cancelActivePlayback();
+      this._playSeq=(Number(this._playSeq)||0)+1;
+      this._playbackLoadSeq=(Number(this._playbackLoadSeq)||0)+1;
+    }
+
     this._timelineInteracting=false;
     this._timelineFollowingLive=false;
     this._timelineWasLiveBeforeGesture=false;
