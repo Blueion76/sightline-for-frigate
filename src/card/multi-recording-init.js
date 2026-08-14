@@ -1,8 +1,9 @@
 import { SightlineCard } from './SightlineCard.js';
 import { applyMethodGroups } from '../utils/apply-method-groups.js';
 import { multiRecordingMethods } from './multi-recording.js';
+import { responsiveUxMethods } from './responsive-ux.js';
 
-applyMethodGroups(SightlineCard.prototype, multiRecordingMethods);
+applyMethodGroups(SightlineCard.prototype, multiRecordingMethods, responsiveUxMethods);
 
 // The v1.1.0 grid-playback wrapper used ordinary inline styles to collapse the
 // responsive desktop workspace. Workstation CSS intentionally uses !important,
