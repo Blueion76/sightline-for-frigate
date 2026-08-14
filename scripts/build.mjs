@@ -30,6 +30,7 @@ const modules = [
   'src/card/multi-recording-controller.js',
   'src/card/multi-recording.js',
   'src/card/responsive-ux.js',
+  'src/card/ios-timeline-date.js',
   'src/card/SightlineCard.js',
   'src/card/multi-recording-init.js',
   'src/editor/methods.js',
