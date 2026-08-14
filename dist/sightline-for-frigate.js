@@ -69,6 +69,7 @@ const TIMELINE_GLYPHS = {
 const CAM_COLORS = ['rgba(10,132,255,.5)','rgba(255,159,10,.5)','rgba(48,209,88,.5)','rgba(191,90,242,.5)'];
 
 // ── src/helpers.js ──
+/** Shared stateless helpers used by card, timeline and camera modules. */
 // Shared stateless helpers used across card modules.
 function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
@@ -246,7 +247,7 @@ const STYLES = `
   #eng-wrap .live-fs-mirror{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:16;display:block;}
   /* iOS MediaStream video can freeze when Apple's native fullscreen compositor
      takes ownership of the element. Keep the live video inline and suppress the
-     native fullscreen affordance on direct go2rtc video. v2.0.26 also removes
+     native fullscreen affordance on direct go2rtc video. also removes
      this card's dedicated iOS fullscreen buttons entirely. */
   #engine>video::-webkit-media-controls-fullscreen-button{display:none!important;}
   #engine{position:absolute;inset:0;}
@@ -1056,7 +1057,7 @@ const STYLES = `
 
 
 /* ─────────────────────────────────────────────────────────────
-   v2.0.0 — Editorial Black
+   Editorial Black
    Final visual layer only. Playback, Frigate queries, timeline math,
    microphone/talk, filters, camera switching and event handlers are unchanged.
    The UI intentionally avoids decorative gradients and excessive glass.
@@ -1402,7 +1403,7 @@ const STYLES = `
   .card .media-gallery-grid .eact .ico:nth-child(n+3){display:none !important;}
 }
 
-/* v2.0.11 — lean timeline chrome + explicit recording gaps. */
+/* lean timeline chrome + explicit recording gaps. */
 .card .tl-head #tl-range{display:none !important;}
 .card .info-row,.card .latest{display:none !important;}
 .card .tl-head{justify-content:flex-end !important;}
@@ -1436,1782 +1437,16 @@ const STYLES = `
 
 `;
 
-// ── src/utils/apply-method-groups.js ──
-// Preserve getters/setters as well as ordinary methods when composing the card.
-function applyMethodGroups(target, ...groups) {
-  for (const group of groups) {
-    const descriptors = Object.getOwnPropertyDescriptors(group);
-    delete descriptors.__proto__;
-    Object.defineProperties(target, descriptors);
-  }
-}
-
-// ── src/card/core.js ──
-const coreMethods = {
-setConfig(config) {
-    config = (config && typeof config === 'object') ? config : {};
-    let cameras = [];
-    const rootGo2rtc = (config.go2rtc && typeof config.go2rtc === 'object') ? config.go2rtc : {};
-    if (Array.isArray(config.cameras)) {
-      cameras = config.cameras.map(c => {
-        if (typeof c === 'string') return { entity:c, name:null, frigate_client_id:null, go2rtc_stream:null };
-        const g = (c?.go2rtc && typeof c.go2rtc === 'object') ? c.go2rtc : {};
-        return { entity:c?.entity || c?.camera_entity || c?.camera || '', name:c?.name||null, frigate_client_id:c?.frigate_client_id || g.frigate_client_id || null, go2rtc_stream:c?.go2rtc_stream || g.stream || null };
-      }).filter(c => c.entity);
-    }
-    const singleEntity = config.camera_entity || config.entity || config.camera;
-    if (!cameras.length && singleEntity) cameras = [{ entity:singleEntity, name:config.title||null, frigate_client_id:config.frigate_client_id || rootGo2rtc.frigate_client_id || null, go2rtc_stream:config.go2rtc_stream || rootGo2rtc.stream || null }];
-    this._configError = cameras.length ? null : 'Select a Frigate camera entity.';
-    if (!cameras.length) cameras = [{ entity:'', name:null, go2rtc_stream:null, frigate_client_id:null }];
-    if (cameras.length > 4) cameras = cameras.slice(0, 4);
-
-    const timelineIn = (config.timeline && typeof config.timeline === 'object') ? config.timeline : {};
-    const downloadIn = (config.download && typeof config.download === 'object') ? config.download : {};
-    const mediaIn = (config.media && typeof config.media === 'object') ? config.media : {};
-    const num = (v, fallback, lo, hi) => { const n=Number(v); return Number.isFinite(n) ? Math.max(lo,Math.min(hi,n)) : fallback; };
-    const timeline = {
-      enabled: timelineIn.enabled !== false,
-      default_minutes: num(timelineIn.default_minutes,10,5,60),
-      show_thumbnails: timelineIn.show_thumbnails !== false,
-      show_glyphs: timelineIn.show_glyphs !== false,
-      show_legend: timelineIn.show_legend !== false,
-      show_zoom_controls: timelineIn.show_zoom_controls !== false,
-      show_filter_button: timelineIn.show_filter_button !== false,
-      show_calendar_button: timelineIn.show_calendar_button !== false,
-      clustering: timelineIn.clustering !== false,
-      same_label_cluster_seconds: num(timelineIn.same_label_cluster_seconds,12,0,120),
-      visual_cluster_max_seconds: num(timelineIn.visual_cluster_max_seconds,60,0,300),
-      glyph_min_px: num(timelineIn.glyph_min_px,20,12,40),
-      glyph_max_px: num(timelineIn.glyph_max_px,30,12,48),
-      max_glyphs: Math.round(num(timelineIn.max_glyphs,3,1,6)),
-      max_thumbnails: Math.round(num(timelineIn.max_thumbnails,12,0,24)),
-      thumbnail_size: Math.round(num(timelineIn.thumbnail_size,84,48,140)),
-    };
-    if(timeline.glyph_max_px<timeline.glyph_min_px) timeline.glyph_max_px=timeline.glyph_min_px;
-    const downloadMaxMinutes=num(downloadIn.max_range_minutes,120,1,720);
-    const download = { default_range_seconds: Math.min(Math.round(downloadMaxMinutes*60),Math.round(num(downloadIn.default_range_seconds,60,2,1800))), max_range_minutes: downloadMaxMinutes };
-    const reviewedDefault=['all','unreviewed','reviewed'].includes(mediaIn.reviewed_default) ? mediaIn.reviewed_default : 'all';
-    const media = { reviewed_default: reviewedDefault };
-    const rawAspect=config.aspect_ratio==null || String(config.aspect_ratio).trim()==='' ? 'auto' : String(config.aspect_ratio).trim();
-    const aspectValid = rawAspect==='auto' || /^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/.test(rawAspect) || (Number.isFinite(Number(rawAspect)) && Number(rawAspect)>0);
-    const streamHeightNum=Number(config.stream_height);
-    const hiddenTabs = Array.isArray(config.hidden_tabs) ? config.hidden_tabs.filter(x=>['clips','recordings','reviews'].includes(String(x))) : [];
-    const requestedDefaultTab = ['live','clips','recordings','reviews'].includes(String(config.default_tab||'')) ? String(config.default_tab) : 'live';
-    const defaultTab = requestedDefaultTab !== 'live' && hiddenTabs.includes(requestedDefaultTab) ? 'live' : requestedDefaultTab;
-
-    this._config = {
-      cameras,
-      window_hours: Math.max(1,Math.min(720,Number(config.window_hours)||24)),
-      refresh_seconds: Math.max(15,Math.min(3600,Number(config.refresh_seconds)||45)),
-      rotate_seconds: num(config.rotate_seconds,0,0,3600),
-      rotate_on_load: config.rotate_on_load === true && cameras.length > 1,
-      default_view: (config.default_view === 'grid' && cameras.length > 1) ? 'grid' : 'single',
-      hidden_tabs: hiddenTabs,
-      default_tab: defaultTab,
-      autoplay_latest_clip: config.autoplay_latest_clip === true,
-      stream_height: Number.isFinite(streamHeightNum) && streamHeightNum>0 ? Math.max(20,Math.min(100,streamHeightNum)) : null,
-      stream_type: config.stream_type === 'hls' ? 'hls' : 'webrtc',
-      aspect_ratio: aspectValid ? rawAspect : 'auto',
-      stream_resizable: config.stream_resizable === true,
-      theme: ['light','dark','auto'].includes(config.theme) ? config.theme : 'dark',
-      accent_color: config.accent_color || null,
-      bg_color: config.bg_color || null,
-      transparency: num(config.transparency ?? config.card_transparency ?? config.background_transparency,0,0,100),
-      timeline,
-      download,
-      media,
-      frigate_client_id: config.frigate_client_id || rootGo2rtc.frigate_client_id || cameras.find(c => c.frigate_client_id)?.frigate_client_id || null,
-      two_way_audio: config.two_way_audio === true,
-      two_way_audio_disconnect_seconds: Number.isFinite(Number(config.two_way_audio_disconnect_seconds)) ? Math.max(0, Number(config.two_way_audio_disconnect_seconds)) : 90,
-    };
-    this._browseOpen = false;
-    this._showReviewed = this._config.media.reviewed_default !== 'unreviewed';
-    if(this._mediaFilter) this._mediaFilter.reviewed=this._config.media.reviewed_default;
-    if (this._galleryMode && this._config.hidden_tabs.includes(this._galleryMode)) { this._galleryMode=''; this._tab='live'; }
-    for (const c of cameras) { if (!this._camCache[c.entity]) this._camCache[c.entity] = mkCamState(); }
-    this._renderShell();
-    this._setupMicrophoneDetection();
-  },
-
-set hass(hass) {
-    this._hass = hass;
-    if (!this._config) return;
-    if (!this._started) { this._started = true; this._start(); return; }
-    if (this._engine) {
-      try { this._engine.hass = hass; } catch(_) {}
-      const ent = this._activeCam?.entity;
-      const newState = hass.states[ent]?.state;
-      if (ent && newState !== this._lastEngineState) {
-        this._lastEngineState = newState;
-        if ('stateObj' in this._engine) { try { this._engine.stateObj = this._streamStateObj(ent); } catch(_) {} }
-      }
-    }
-    if(!(this._mediaPickerActive && this._galleryMode)) {
-      this._syncStatus();
-      if (this._config.theme === 'auto') this._applyCardStyle();
-    }
-  },
-
-get _activeCam() { return this._config?.cameras[this._activeCamIdx] || this._config?.cameras[0]; },
-
-async _applyInitialMediaState() {
-    if(this._initialMediaStateApplied) return;
-    this._initialMediaStateApplied=true;
-    const tab=this._config?.default_tab||'live';
-    if(tab==='live') return;
-    await this._setGalleryMode(tab);
-    if(tab!=='clips' || !this._config?.autoplay_latest_clip || this._galleryMode!=='clips') return;
-    const source=this._eventsMode==='all'?this._allDisplayEvents():this._events;
-    const latest=this._filterMediaEvents(source).filter(ev=>ev?.has_clip).sort((a,b)=>Number(b.start_time||0)-Number(a.start_time||0))[0];
-    if(latest) await this._showClip(latest);
-  },
-
-_isEditorPreview() {
-    let node=this;
-    const editorTags=new Set(['hui-card-preview','hui-dialog-edit-card','hui-card-element-editor','hui-card-editor','hui-dialog-edit-card']);
-    for(let i=0;i<14 && node;i++){
-      const tag=String(node.tagName||'').toLowerCase();
-      if(editorTags.has(tag)) return true;
-      const cls=String(node.className||'');
-      if(/(^|\s)(card-preview|preview-card|edit-card-preview)(\s|$)/i.test(cls)) return true;
-      if(node.parentElement){ node=node.parentElement; continue; }
-      const root=node.getRootNode?.();
-      node=(root && root.host && root.host!==node) ? root.host : null;
-    }
-    return false;
-  },
-
-getCardSize() { return 10; },
-getGridSize() { return { columns: 2, rows: 3 }; },
-
-disconnectedCallback() {
-    this._stopRotate(); this._cancelActivePlayback(); this._stopTalk();
-    if (this._refresh) clearInterval(this._refresh);
-    if (this._timelineClockTimer) clearInterval(this._timelineClockTimer);
-    clearTimeout(this._timelineDataTimer); clearTimeout(this._timelineDynamicTimer); this._timelineDynamicTimer=null; this._timelineDynamicPending=false;
-    clearTimeout(this._wt); clearTimeout(this._mediaPickerApplyTimer); clearTimeout(this._mediaPickerReleaseTimer);
-    this._mediaPickerActive=false; this._mediaPickerActiveId=''; this._mediaPickerPendingFilterRender=false; this._removeLiveFsMirror();
-    if (this._scrubAbort) { try { this._scrubAbort.abort(); } catch(_) {} this._scrubAbort=null; }
-    if (this._scrollAbort) { try { this._scrollAbort.abort(); } catch(_) {} this._scrollAbort=null; }
-    ++this._timelineLoadSeq; ++this._timelineDataSeq; ++this._timelineSeekSeq;
-    if (this._unsub) { try { this._unsub.then(u=>u&&u()); } catch(_) {} this._unsub=null; }
-    if (this._timelineResizeRaf) cancelAnimationFrame(this._timelineResizeRaf); this._timelineResizeRaf=0;
-    if (this._ro) this._ro.disconnect();
-    if (this._micDeviceChangeHandler && navigator.mediaDevices?.removeEventListener) { try { navigator.mediaDevices.removeEventListener('devicechange', this._micDeviceChangeHandler); } catch (_) {} }
-    this._micDeviceChangeHandler=null;
-  },
-
-async _start() {
-    if (this._configError || !this._activeCam?.entity) { this._renderAll(); return; }
-    await this._discoverAll();
-    this._setupMicrophoneDetection();
-    this._loadFrigateFilterMetadata();
-    const now = Math.floor(Date.now()/1000);
-    this._timelineFocusTs = now;
-    const initialTimelineSpan=this._timelineDefaultSpanSeconds();
-    this._winStart = now - initialTimelineSpan/2; this._winEnd = now + initialTimelineSpan/2; this._timelineZoom = 3600/initialTimelineSpan;
-    this._timelineFollowingLive = true; this._timelineWasLiveBeforeGesture = false; this._timelineLiveCrossed = false;
-    if (this._config.default_view === 'grid' && this._config.cameras.length > 1) this._setViewMode('grid');
-    await this._mountEngine();
-    await this._loadWindow(true, true);
-    await this._applyInitialMediaState();
-    this._loadCalendar(); this._subscribe();
-    this._refresh = setInterval(() => { if (this._isNowWindow()) this._loadWindow(true); this._loadFrigateFilterMetadata(); }, this._config.refresh_seconds*1000);
-    if (this._timelineClockTimer) clearInterval(this._timelineClockTimer);
-    this._timelineClockTimer = setInterval(() => {
-      if (!this.isConnected || this._galleryMode || this._timelineInteracting) return;
-      this._updateTimelineLive();
-      if (this._timelineFollowingLive) this._scheduleTimelineDynamicData('live');
-    }, 1000);
-    if (this._config.rotate_on_load === true && this._config.cameras.length > 1) this._startRotate();
-    this._setupResizeObserver(); this._stabilizeInitialTimeline();
-  }
-};
-
-// ── src/card/live.js ──
-// Prototype methods grouped by responsibility.
-const liveMethods = {
-async _discoverAll() { await Promise.all(this._config.cameras.map(c => this._discoverOne(c.entity))); },
-
-async _discoverOne(entity) {
-    const cache = this._camCache[entity] || mkCamState();
-    if (cache.discovered) return;
-    const ent = this._hass.states[entity]; if (!ent) return;
-    cache.clientId = ent.attributes?.client_id || ent.attributes?.mqtt_client_id || 'frigate';
-    cache.cam = ent.attributes?.camera_name || entity.replace(/^camera\./,'');
-    cache.discovered = true;
-    this._camCache[entity] = cache;
-  },
-
-_streamStateObj(entity) {
-    const raw = this._hass.states[entity]; if (!raw) return null;
-    const attrs = { ...raw.attributes };
-    if (this._config.stream_type === 'hls') delete attrs.frontend_stream_type;
-    else attrs.frontend_stream_type = 'web_rtc';
-    return { ...raw, attributes: attrs };
-  },
-
-_unmountEngine() {
-    ++this._liveFsRecoverySeq;
-    if (this._liveFsCleanup) {
-      try { this._liveFsCleanup(); } catch (_) {}
-      this._liveFsCleanup = null;
-    }
-    // Never leave the visual iOS fullscreen shell behind when the live engine
-    // is intentionally unmounted (camera switch, playback, card teardown).
-    const wrap=this.shadowRoot?.querySelector('#eng-wrap');
-    if(wrap){
-      wrap.classList.remove('live-pseudo-fullscreen');
-      wrap.querySelector('.live-fs-exit')?.remove();
-    }
-    this._livePseudoFullscreen=false;
-    this._removeLiveFsMirror();
-    const engine = this.shadowRoot?.querySelector('#engine');
-    if (engine) engine.innerHTML = '';
-    this._engine = null;
-  },
-
-async _mountEngine() {
-    const slot = this.shadowRoot.querySelector('#engine'); if (!slot) return;
-    const entity = this._activeCam?.entity; if (!entity) return;
-    slot.innerHTML = '<div class="ph skel-stream"></div>';
-    this._engine = null;
-
-    // When two-way audio is enabled and a go2rtc source is configured, use the
-    // same Frigate-proxied go2rtc WebRTC session for video, camera audio and microphone send.
-    // This mirrors Advanced Camera Card's VideoRTC architecture and avoids a
-    // second talkback peer competing with the live player.
-    if (this._config.two_way_audio && this._talkStreamName() && this._go2rtcEndpoint()) {
-      try {
-        // If Talk is being started or is already active, never create a
-        // receive-only peer while the microphone acquisition is in flight.
-        // On iOS this can race a render/remount and permanently leave the
-        // successful peer with no sendonly audio transceiver.
-        if (this._talkSpeaking && this._talkMicReadyPromise) {
-          try { await this._talkMicReadyPromise; } catch (_) {}
-        }
-        await this._mountGo2RTCVideo(this._talkSpeaking ? this._talkMic : null);
-        return;
-      } catch (e) {
-        console.warn('[Frigate] go2rtc live provider failed, falling back to HA camera stream', e);
-        this._destroyGo2RTCLive();
-      }
-    }
-
-    const stateObj = this._streamStateObj(entity);
-    if (!stateObj) return;
-    const s = document.createElement('ha-camera-stream');
-    s.hass = this._hass;
-    s.stateObj = stateObj;
-    s.controls = true;
-    s.muted = this._streamMuted;
-    s.style.cssText = 'width:100%;height:100%;display:block';
-    slot.innerHTML = ''; slot.appendChild(s);
-    this._engine = s;
-    // iOS native video fullscreen can interrupt a live WebRTC MediaStream.
-    // Wire the nested HA player as soon as it exists; the helper retries until
-    // ha-camera-stream has created its internal <video> element.
-    this._wireLiveFsNudge(s);
-    this._renderStreamCtrl();
-  },
-
-_rtcDbg(_label, _data = null) {},
-
-_rtcSafe(v) {
-    if (v == null) return v;
-    if (typeof v === 'string') return v.length > 1200 ? v.slice(0,1200) + '…' : v;
-    if (v instanceof Error) return { name:v.name, message:v.message, stack:v.stack };
-    try { return JSON.parse(JSON.stringify(v)); } catch (_) { return String(v); }
-  },
-
-_rtcRedactUrl(value) {
-    try {
-      const u = new URL(String(value), location.origin);
-      if (u.searchParams.has('authSig')) u.searchParams.set('authSig', '[redacted]');
-      return u.toString();
-    } catch (_) { return String(value ?? ''); }
-  },
-
-_rtcAudioDiagnostics(pc, microphoneStream) {
-    try {
-      const tx = pc?.getTransceivers?.() || [];
-      const audioTx = tx.filter(t => t.sender?.track?.kind === 'audio' || t.receiver?.track?.kind === 'audio');
-      return {
-        microphoneTracks: microphoneStream?.getAudioTracks?.().map(t => ({ id:t.id, readyState:t.readyState, enabled:t.enabled, muted:t.muted, label:t.label })) || [],
-        audioTransceivers: audioTx.map((t,i) => ({
-          i, mid:t.mid, direction:t.direction, currentDirection:t.currentDirection,
-          senderTrack:t.sender?.track ? {id:t.sender.track.id,readyState:t.sender.track.readyState,enabled:t.sender.track.enabled,muted:t.sender.track.muted} : null,
-          senderKind:t.sender?.track?.kind || null, receiverKind:t.receiver?.track?.kind || null
-        }))
-      };
-    } catch (e) { return {error:this._rtcSafe(e)}; }
-  },
-
-async _rtcAudioStats(pc) {
-    try {
-      const stats = await pc?.getStats?.();
-      const out = [];
-      stats?.forEach(r => {
-        if (r.type === 'outbound-rtp' && r.kind === 'audio') out.push({
-          id:r.id, kind:r.kind, packetsSent:r.packetsSent, bytesSent:r.bytesSent,
-          packetsLost:r.packetsLost, targetBitrate:r.targetBitrate, codecId:r.codecId,
-          remoteId:r.remoteId
-        });
-      });
-      return out;
-    } catch (e) { return [{error:this._rtcSafe(e)}]; }
-  },
-
-async _signFrigateWsUrl(endpoint, src) {
-    const raw = String(endpoint || '');
-    if (!raw) throw new Error('Missing go2rtc WebSocket endpoint');
-    let u;
-    try { u = new URL(raw); } catch (_) { throw new Error('Invalid go2rtc WebSocket endpoint'); }
-    const pageWsOrigin = location.origin.replace(/^http/i, 'ws');
-    const sameOrigin = u.origin === pageWsOrigin;
-    if (!sameOrigin || !u.pathname.startsWith('/api/frigate/')) {
-      throw new Error('Refusing non-Home-Assistant Frigate WebSocket endpoint');
-    }
-    const path = `${u.pathname}${u.search}${u.search ? '&' : '?'}src=${encodeURIComponent(src)}`;
-    if (!this._hass?.callWS) throw new Error('Home Assistant connection is unavailable for WebSocket authentication');
-    const signed = await this._hass.callWS({ type:'auth/sign_path', path, expires:300 });
-    if (!signed?.path) throw new Error('Home Assistant did not return a signed WebSocket path');
-    const signedUrl = new URL(signed.path, location.origin);
-    signedUrl.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return { url:signedUrl.toString(), authMode:'ha_signed_path', signedPath:signed.path };
-  },
-
-_rtcSdpSummary(sdp) {
-    if (!sdp) return null;
-    const lines=sdp.split(/\r?\n/);
-    const media=lines.filter(x=>/^m=|^a=mid:|^a=sendrecv|^a=sendonly|^a=recvonly|^a=inactive|^a=rtpmap:|^a=fmtp:|^a=ice-ufrag:|^a=ice-pwd:|^a=fingerprint:|^a=setup:|^a=candidate:/.test(x));
-    return media.join('\n');
-  },
-
-_go2rtcEndpoint() {
-    // Browser-side live WebRTC is always routed through the Frigate Home
-    // Assistant integration. Never honor a direct go2rtc/Frigate host URL:
-    // doing so breaks remote access, SSL/auth setups, HA Companion networking,
-    // and multi-instance routing.
-    const discovered=this._cc?.()?.clientId;
-    const clientId = this._activeCam?.frigate_client_id || discovered || this._config.frigate_client_id || 'frigate';
-    return `${location.origin.replace(/^http/i,'ws')}/api/frigate/${encodeURIComponent(String(clientId))}/go2rtc/ws/api/ws`;
-  },
-
-async _mountGo2RTCVideo(microphoneStream=null) {
-    // A lifecycle/render-triggered remount must inherit the active Talk
-    // microphone. Otherwise it can replace a working sendonly peer with a
-    // receive-only peer, which is exactly what the iOS diagnostic exposed.
-    if (!microphoneStream && this._talkSpeaking && this._talkMic) microphoneStream=this._talkMic;
-    if (this._go2rtcMountPromise) {
-      try { await this._go2rtcMountPromise; } catch (_) {}
-      if (this._go2rtcLive?.pc && (!microphoneStream || this._microphoneTransceiver)) return this._go2rtcLive.video;
-    }
-    const runMount = async () => {
-    const slot=this.shadowRoot.querySelector('#engine');
-    if(!slot) throw new Error('Live engine not available');
-
-    // Preserve the existing live <video> element when Talk starts.  Replacing
-    // it after getUserMedia() resolves loses the original user-activation
-    // context on Safari/iOS (and can also interrupt desktop autoplay).  The
-    // same media element can safely receive the new WebRTC MediaStream after
-    // the microphone-enabled peer is negotiated.
-    const existingVideo = slot.querySelector('video');
-    this._destroyGo2RTCLive(!!existingVideo);
-    const video=existingVideo || document.createElement('video');
-    video.autoplay=true; video.playsInline=true; video.controls=true; video.preload='auto';
-    if (!existingVideo) video.muted=!this._liveAudioEnabled;
-    video.volume=1;
-    video.style.cssText='width:100%;height:100%;display:block';
-
-    if (!existingVideo) { slot.innerHTML=''; slot.appendChild(video); }
-    this._watchAutoAspectMedia(video);
-
-    // Port the proven Advanced Camera Card/go2rtc Safari flow: ordinary live
-    // playback has only recvonly video/audio. The microphone is added only
-    // when Talk is actually active, matching ACC's documented call lifecycle.
-    const pc=new RTCPeerConnection({bundlePolicy:'max-bundle',iceServers:[{urls:['stun:stun.cloudflare.com:3478','stun:stun.l.google.com:19302']}],sdpSemantics:'unified-plan'});
-    pc.addEventListener('connectionstatechange',()=>this._rtcDbg('connectionstatechange',{state:pc.connectionState,ice:pc.iceConnectionState}));
-    let micTx=null;
-    if(microphoneStream?.getAudioTracks()?.length) micTx=pc.addTransceiver(microphoneStream.getAudioTracks()[0],{direction:'sendonly'});
-    pc.addTransceiver('video',{direction:'recvonly'});
-    pc.addTransceiver('audio',{direction:'recvonly'});
-    this._liveAudioAvailable=false; this._microphoneTransceiver=micTx;
-
-    const endpoint=this._go2rtcEndpoint(); const src=this._talkStreamName();
-    if(!endpoint || !src) throw new Error('Missing go2rtc endpoint or stream');
-    let signedWs;
-    try {
-      signedWs=await this._signFrigateWsUrl(endpoint,src);
-    } catch (e) {
-      throw e;
-    }
-    const wsUrl=signedWs.url;
-    this._rtcDbg('WS CONSTRUCTOR INPUT', {
-      url:this._rtcRedactUrl(wsUrl),
-      endpoint:this._rtcRedactUrl(endpoint),
-      stream:src,
-      authMode:signedWs.authMode,
-      signedPath: signedWs.authMode==='ha_signed_path' ? '[present]' : null,
-      pageOrigin:location.origin,
-      pageProtocol:location.protocol,
-      pageHref:location.href.split('#')[0],
-      sameOrigin:(()=>{try{return new URL(endpoint).origin===location.origin.replace(/^http/i,'ws')}catch(_){return null}})(),
-      cookiesPresent:!!document.cookie,
-      cookieNames:document.cookie ? document.cookie.split(';').map(x=>x.split('=')[0].trim()).filter(Boolean) : []
-    });
-    let ws;
-    try {
-      ws=new WebSocket(wsUrl);
-    } catch (e) {
-      throw e;
-    }
-    ws.binaryType='arraybuffer';
-    this._go2rtcLive={video,pc,ws,stream:null,microphoneStream}; this._engine=video; this._talkPC=pc; this._talkWS=ws; this._talkUsingLivePC=true;
-    video.setAttribute('playsinline','');
-    video.setAttribute('webkit-playsinline','');
-    // Native AVPlayer fullscreen is unreliable for a video.srcObject WebRTC
-    // feed on iOS. Keep this exact element/peer alive and convert native
-    // fullscreen attempts into our visual fullscreen shell instead.
-    this._wireLiveFsNudge(video);
-
-    pc.addEventListener('icecandidate',ev=>{
-      if(ev.candidate && ws.readyState===WebSocket.OPEN) { const c=ev.candidate.toJSON(); this._rtcDebug.candidates.push({direction:'out',candidate:c}); this._rtcDbg('send ICE candidate',c); ws.send(JSON.stringify({type:'webrtc/candidate',value:c.candidate})); }
-      if(!ev.candidate && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({type:'webrtc/candidate',value:''}));
-    });
-
-    pc.addEventListener('connectionstatechange',()=>{
-      if(!this._go2rtcLive || this._go2rtcLive.pc!==pc) return;
-      if(pc.connectionState==='connected') {
-        const tx=pc.getTransceivers();
-        const tracks=tx.filter(tr=>tr.currentDirection==='recvonly').map(tr=>tr.receiver.track).filter(Boolean);
-        this._rtcDebug.tracks=tracks.map(t=>({kind:t.kind,id:t.id,readyState:t.readyState,muted:t.muted,enabled:t.enabled}));
-        const video2=document.createElement('video');
-        video2.autoplay=true; video2.playsInline=true; video2.muted=true; video2.preload='auto';
-        video2.addEventListener('loadeddata',()=>{
-          if(!this._go2rtcLive || this._go2rtcLive.pc!==pc) return;
-          const stream=video2.srcObject; if(!(stream instanceof MediaStream)) { this._rtcDbg('TEMP VIDEO has no MediaStream'); return; }
-          this._go2rtcLive.stream=stream; this._liveAudioAvailable=stream.getAudioTracks().length>0;
-          video.srcObject=stream;
-          video.muted=!this._liveAudioEnabled;
-          video.volume=1;
-          video.setAttribute('playsinline','');
-          video.play().catch(()=>{});
-          if (this._liveAudioEnabled) {
-            // If iOS replaced the media element during Talk startup, retry
-            // playback on the next media-ready tick without introducing a
-            // second audio control.
-            const resumeAudio = () => {
-              if (!this._go2rtcLive || this._go2rtcLive.pc!==pc) return;
-              try { video.muted=false; video.volume=1; const p=video.play(); if(p?.catch)p.catch(()=>{}); } catch (_) {}
-            };
-            video.addEventListener('canplay', resumeAudio, {once:true});
-            video.addEventListener('loadedmetadata', resumeAudio, {once:true});
-            setTimeout(resumeAudio, 250);
-          }
-          video2.srcObject=null; this._renderStreamCtrl();
-        },{once:true});
-        video2.srcObject=new MediaStream(tracks);
-        video2.play().catch(()=>{});
-      } else if(pc.connectionState==='failed' || pc.connectionState==='disconnected') {
-        pc.close();
-        this._setStatusOverlay('error','Live stream disconnected','Unable to maintain the go2rtc WebRTC connection.',{retry:true,retryHandler:()=>this._mountGo2RTCVideo(this._talkMic)});
-      }
-    });
-
-    let remoteDescriptionSet=false; const pendingCandidates=[];
-    let answerResolve,answerReject; const answerPromise=new Promise((resolve,reject)=>{answerResolve=resolve;answerReject=reject;});
-    ws.addEventListener('message',async ev=>{
-      if(typeof ev.data!=='string') return;
-      try { const msg=JSON.parse(ev.data);
-        if(msg.type==='webrtc/candidate') { if(!msg.value) {this._rtcDbg('remote ICE end'); return;} const candidate={candidate:msg.value,sdpMid:'0'}; this._rtcDebug.candidates.push({direction:'in',candidate}); if(remoteDescriptionSet){try{await pc.addIceCandidate(candidate);this._rtcDbg('remote ICE added');}catch(e){this._rtcDbg('remote ICE add FAILED',e);}} else pendingCandidates.push(candidate); }
-        else if(msg.type==='webrtc/answer') { this._rtcDebug.answer=this._rtcSdpSummary(msg.value); try{await pc.setRemoteDescription({type:'answer',sdp:msg.value}); this._rtcDbg('remote description set',{type:pc.remoteDescription?.type,transceivers:pc.getTransceivers().map((t,i)=>({i,mid:t.mid,direction:t.direction,currentDirection:t.currentDirection,kind:t.receiver.track?.kind,track:t.receiver.track?.id,senderKind:t.sender.track?.kind})),audio:this._rtcAudioDiagnostics(pc,microphoneStream)}); remoteDescriptionSet=true; while(pendingCandidates.length){const c=pendingCandidates.shift(); try{await pc.addIceCandidate(c);this._rtcDbg('queued ICE added');}catch(e){this._rtcDbg('queued ICE FAILED',e);}} answerResolve();}catch(e){this._rtcDebug.errors.push(this._rtcSafe(e));this._rtcDbg('setRemoteDescription FAILED',e);answerReject(e);} }
-        else if(msg.type==='error') {this._rtcDebug.errors.push({go2rtc:msg.value}); this._rtcDbg('GO2RTC ERROR',msg.value); answerReject(new Error(msg.value||'go2rtc signaling error'));}
-      } catch(e){ console.warn('[Frigate] go2rtc signaling message',e); }
-    });
-    ws.addEventListener('open',async()=>{try{this._rtcDbg('WS OPEN',{url:this._rtcRedactUrl(ws.url),authMode:signedWs.authMode,readyState:ws.readyState,readyStateName:'OPEN',elapsedMs:Math.round(performance.now()-((this._rtcDebug?.started||Date.now())))}); const offer=await pc.createOffer(); this._rtcDebug.offer=this._rtcSdpSummary(offer.sdp); this._rtcDbg('OFFER CREATED',{sdpSummary:this._rtcDebug.offer,transceivers:pc.getTransceivers().map((t,i)=>({i,mid:t.mid,direction:t.direction,currentDirection:t.currentDirection,senderKind:t.sender.track?.kind,receiverKind:t.receiver.track?.kind})),audio:this._rtcAudioDiagnostics(pc,microphoneStream)}); await pc.setLocalDescription(offer); this._rtcDbg('LOCAL DESCRIPTION SET',{signalingState:pc.signalingState,iceGatheringState:pc.iceGatheringState}); if(ws.readyState!==WebSocket.OPEN) throw new Error('go2rtc WebSocket closed before offer'); ws.send(JSON.stringify({type:'webrtc/offer',value:offer.sdp})); this._rtcDbg('OFFER SENT');}catch(e){this._rtcDebug.errors.push(this._rtcSafe(e)); this._rtcDbg('OFFER FAILED',e); answerReject(e);}}, {once:true});
-    ws.addEventListener('error',(e)=>{this._rtcDebug.errors.push(this._rtcSafe(e));this._rtcDbg('WS ERROR',{eventType:e?.type,readyState:ws.readyState,readyStateName:['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState]||'UNKNOWN',url:this._rtcRedactUrl(ws.url),authMode:signedWs.authMode});answerReject(new Error('Unable to connect to go2rtc'));},{once:true});
-    ws.addEventListener('close',(e)=>{this._rtcDbg('WS CLOSE',{code:e.code,reason:e.reason,wasClean:e.wasClean,readyState:ws.readyState,readyStateName:['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState]||'UNKNOWN',url:this._rtcRedactUrl(ws.url),authMode:signedWs.authMode});if(this._go2rtcLive?.pc===pc && pc.connectionState!=='connected') answerReject(new Error('go2rtc WebSocket closed during negotiation'));},{once:true});
-    try { await Promise.race([answerPromise,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Timed out waiting for go2rtc WebRTC answer')),10000))]); this._rtcDbg('NEGOTIATION ANSWER RECEIVED'); } catch(e) { this._rtcDebug.errors.push(this._rtcSafe(e)); this._rtcDbg('NEGOTIATION FAILED/TIMEOUT',e); throw e; }
-    this._wireLiveFsNudge(video);
-    this._renderStreamCtrl(); return video;
-    };
-    const mountPromise = runMount();
-    this._go2rtcMountPromise = mountPromise;
-    try { return await mountPromise; } finally { if (this._go2rtcMountPromise === mountPromise) this._go2rtcMountPromise = null; }
-  },
-
-_destroyGo2RTCLive(preserveVideo=false) {
-    const live=this._go2rtcLive;
-    this._go2rtcLive=null;
-    this._liveAudioAvailable=false;
-    if(live?.ws){try{live.ws.close();}catch(_){}}
-    if(live?.pc){try{live.pc.close();}catch(_){}}
-    // When replacing a receive-only peer with the microphone-enabled Talk
-    // peer, keep the same DOM media element.  Reusing it preserves the user's
-    // prior audio-unlock gesture instead of creating a fresh audible media
-    // element after getUserMedia() has yielded.
-    if(live?.video && !preserveVideo){try{live.video.pause();live.video.srcObject=null;}catch(_){}}
-    if(this._talkUsingLivePC){ this._talkPC=null; this._talkWS=null; this._talkUsingLivePC=false; }
-  },
-
-_wireLiveFsNudge(engineEl, attempt=0) {
-    const vid=this._findVideo(engineEl);
-    if(!vid){
-      if(attempt<30) setTimeout(()=>{
-        if(this._engine===engineEl) this._wireLiveFsNudge(engineEl,attempt+1);
-      },100);
-      return;
-    }
-    this._watchAutoAspectMedia(vid);
-    if(vid._frigateLiveFsCleanup) return;
-
-    const wrap=this.shadowRoot?.querySelector('#eng-wrap');
-    if(!wrap) return;
-
-    vid.playsInline=true;
-    vid.setAttribute('playsinline','');
-    vid.setAttribute('webkit-playsinline','');
-    // Keep native AVPlayer fullscreen out of the live MediaStream path on iOS.
-    // v2.0.26 no longer renders a dedicated iOS fullscreen button; this is a
-    // defensive guard for native player chrome / WebKit presentation changes.
-    try { vid.setAttribute('controlslist','nofullscreen'); } catch(_) {}
-
-    // iOS can pause a MediaStream-backed <video> as it is transferred to/from
-    // native AVPlayer fullscreen. Keep the exact same MediaStream/peer attached,
-    // but let AVPlayer own fullscreen while it is active. Critically, once native
-    // fullscreen ends we restore the ordinary card geometry immediately. The old
-    // v2.0.26-v2.0.34 behavior intentionally left a fixed pseudo-fullscreen shell
-    // behind, which is the oversized player users then had to dismiss with X.
-    let fsHandoffUntil=0;
-    let nativeFullscreenActive=false;
-    const resumeSameLiveVideo=()=>{
-      if(!vid.isConnected || !this.isConnected) return;
-      if(this._go2rtcLive?.video && this._go2rtcLive.video!==vid && engineEl===vid) return;
-      try {
-        vid.playsInline=true;
-        vid.setAttribute('playsinline','');
-        vid.setAttribute('webkit-playsinline','');
-        const p=vid.play();
-        if(p?.catch) p.catch(()=>{});
-      } catch(_) {}
-    };
-    const clearFullscreenShell=()=>{
-      // This is intentionally synchronous: layout must be back to the embedded
-      // card before WebKit paints the first post-fullscreen frame.
-      wrap.classList.remove('live-pseudo-fullscreen');
-      wrap.querySelector('.live-fs-exit')?.remove();
-      this._livePseudoFullscreen=false;
-    };
-    const beginNativeFullscreen=()=>{
-      if(!vid.isConnected) return;
-      nativeFullscreenActive=true;
-      fsHandoffUntil=performance.now()+1600;
-      // A stale visual shell from an earlier fallback must never sit underneath
-      // or survive a real native fullscreen presentation.
-      clearFullscreenShell();
-      this._removeLiveFsMirror();
-    };
-    const finishNativeFullscreen=(force=false)=>{
-      if(!force && !nativeFullscreenActive && !this._livePseudoFullscreen) return;
-      nativeFullscreenActive=false;
-      fsHandoffUntil=performance.now()+1600;
-      clearFullscreenShell();
-
-      // Recover the live compositor inside the NORMAL-SIZED card. A mirror made
-      // from the same receiver tracks can bridge the first post-fullscreen frame
-      // without keeping the wrapper fixed over the viewport.
-      resumeSameLiveVideo();
-      if(vid.srcObject) this._createLiveFsMirror(vid,wrap);
-      requestAnimationFrame(resumeSameLiveVideo);
-      setTimeout(resumeSameLiveVideo,80);
-      setTimeout(()=>this._recoverIOSLiveAfterFullscreen(),120);
-    };
-    const onBegin=()=>beginNativeFullscreen();
-    const onPresentation=()=>{
-      if(vid.webkitPresentationMode==='fullscreen') beginNativeFullscreen();
-      else if(nativeFullscreenActive || this._livePseudoFullscreen) finishNativeFullscreen(true);
-    };
-    // Some WKWebView builds can deliver end without a reliable begin/presentation
-    // sequence. Force the geometry cleanup on every native fullscreen end.
-    const onEnd=()=>finishNativeFullscreen(true);
-    const onPause=()=>{
-      // Resume only pauses produced by the native-fullscreen handoff. Once the
-      // transition has settled, the user's normal pause control must work.
-      if(nativeFullscreenActive && performance.now()<fsHandoffUntil) {
-        setTimeout(resumeSameLiveVideo,0);
-      }
-    };
-
-    vid.addEventListener('webkitbeginfullscreen',onBegin);
-    vid.addEventListener('webkitendfullscreen',onEnd);
-    vid.addEventListener('webkitpresentationmodechanged',onPresentation);
-    vid.addEventListener('pause',onPause);
-
-    const cleanup=()=>{
-      vid.removeEventListener('webkitbeginfullscreen',onBegin);
-      vid.removeEventListener('webkitendfullscreen',onEnd);
-      vid.removeEventListener('webkitpresentationmodechanged',onPresentation);
-      vid.removeEventListener('pause',onPause);
-      try { delete vid._frigateLiveFsCleanup; } catch(_) { vid._frigateLiveFsCleanup=null; }
-    };
-    vid._frigateLiveFsCleanup=cleanup;
-    if(this._liveFsCleanup && this._liveFsCleanup!==cleanup) {
-      try { this._liveFsCleanup(); } catch(_) {}
-    }
-    this._liveFsCleanup=cleanup;
-  },
-
-_createLiveFsMirror(source,wrap){
-    if(!source?.srcObject||!wrap) return null;
-    this._removeLiveFsMirror();
-    const mirror=document.createElement('video');
-    mirror.className='live-fs-mirror';
-    mirror.autoplay=true; mirror.playsInline=true; mirror.muted=true; mirror.controls=false;
-    mirror.setAttribute('playsinline',''); mirror.setAttribute('webkit-playsinline','');
-    // Use a fresh MediaStream wrapper around the same receiver tracks. This
-    // keeps one RTCPeerConnection/audio path, but forces WebKit to create a new
-    // video rendering attachment instead of reusing the compositor that native
-    // fullscreen may have frozen.
-    try {
-      mirror.srcObject = source.srcObject instanceof MediaStream
-        ? new MediaStream(source.srcObject.getTracks())
-        : source.srcObject;
-    } catch(_) { mirror.srcObject=source.srcObject; }
-    wrap.appendChild(mirror);
-    this._liveFsMirror=mirror;
-    const play=()=>{ try { const p=mirror.play(); if(p?.catch)p.catch(()=>{}); } catch(_) {} };
-    requestAnimationFrame(play); setTimeout(play,80);
-    return mirror;
-  },
-
-_removeLiveFsMirror(){
-    const m=this._liveFsMirror;
-    this._liveFsMirror=null;
-    if(m){ try { m.pause(); m.srcObject=null; } catch(_) {} try { m.remove(); } catch(_) {} }
-  },
-
-_recoverIOSLiveAfterFullscreen(){
-    if(!this._isIOSRecordingPlatform() || !this.isConnected) { this._removeLiveFsMirror(); return; }
-    const seq=++this._liveFsRecoverySeq;
-    const source=this._go2rtcLive?.video || this._findVideo(this._engine);
-    if(!source) {
-      this._removeLiveFsMirror();
-      if(!this._playing) requestAnimationFrame(()=>{ if(seq===this._liveFsRecoverySeq && this.isConnected) this._mountEngine(); });
-      return;
-    }
-    try {
-      source.playsInline=true;
-      source.setAttribute('playsinline','');
-      source.setAttribute('webkit-playsinline','');
-      source.setAttribute('controlslist','nofullscreen');
-      const p=source.play?.(); if(p?.catch)p.catch(()=>{});
-    } catch(_) {}
-
-    // Keep the mirror on top while the original element proves that WebKit is
-    // producing frames again. requestVideoFrameCallback detects the exact
-    // compositor recovery rather than trusting readyState/videoWidth, which can
-    // remain healthy even when iOS has frozen the visual surface.
-    let recovered=false;
-    const finish=()=>{
-      if(recovered || seq!==this._liveFsRecoverySeq) return;
-      recovered=true;
-      clearTimeout(timer);
-      this._removeLiveFsMirror();
-    };
-    try {
-      if(typeof source.requestVideoFrameCallback==='function') {
-        source.requestVideoFrameCallback(()=>finish());
-      }
-    } catch(_) {}
-    const startTime=Number(source.currentTime);
-    const timer=setTimeout(()=>{
-      if(recovered || seq!==this._liveFsRecoverySeq || !this.isConnected) return;
-      const moved=Number.isFinite(startTime) && Number.isFinite(Number(source.currentTime)) && Number(source.currentTime)>startTime+.03;
-      if(moved) { finish(); return; }
-      // Last-resort repair: rebuild only the live engine. This is intentionally
-      // delayed until the old video failed to produce a frame, avoiding needless
-      // WebRTC renegotiation on healthy exits while guaranteeing that a frozen
-      // iOS compositor does not remain on screen.
-      this._removeLiveFsMirror();
-      if(this._playing) return;
-      this._unmountEngine();
-      requestAnimationFrame(()=>{ if(this.isConnected && !this._playing) this._mountEngine(); });
-    },650);
-  },
-
-_exitLivePseudoFullscreen(wrap){
-    if(!wrap) return;
-    wrap.classList.remove('live-pseudo-fullscreen');
-    wrap.querySelector('.live-fs-exit')?.remove();
-    this._livePseudoFullscreen=false;
-    // Do not immediately destroy the bridge video. It covers the WebKit
-    // compositor hand-back until the original live element produces a frame.
-    this._recoverIOSLiveAfterFullscreen();
-  },
-
-_addLiveFsExit(wrap){
-    if(!wrap || wrap.querySelector('.live-fs-exit')) return;
-    const b=document.createElement('button');
-    b.className='live-fs-exit'; b.type='button'; b.title='Exit fullscreen'; b.setAttribute('aria-label','Exit fullscreen'); b.textContent='×';
-    b.addEventListener('click',e=>{
-      e.stopPropagation();
-      this._exitLivePseudoFullscreen(wrap);
-    });
-    wrap.appendChild(b);
-  },
-
-async _mountGrid() {
-    const grid = this.shadowRoot.querySelector('#cam-grid'); if (!grid) return;
-    const n = this._config.cameras.length;
-    const slots = n === 3 ? 4 : n;   // 3 cams → 4 slots, last is placeholder
-    grid.className = `cam-grid cams-${n}`;
-    grid.innerHTML = '';
-    for (let i = 0; i < slots; i++) {
-      const slot = document.createElement('div');
-      const isPlaceholder = i >= n;
-      slot.className = `grid-slot${isPlaceholder ? ' placeholder' : ''}`;
-      if (!isPlaceholder) {
-        const c = this._config.cameras[i];
-        const name = cap(camDisplayName(c));
-        // stream
-        const stateObj = this._streamStateObj(c.entity);
-        if (stateObj) {
-          const s = document.createElement('ha-camera-stream');
-          s.hass = this._hass; s.stateObj = stateObj; s.controls = false; s.muted = true;
-          s.style.cssText = 'width:100%;height:100%;display:block;pointer-events:none';
-          slot.appendChild(s);
-        }
-        // label
-        const lbl = document.createElement('div');
-        lbl.className = 'grid-label'; lbl.textContent = name;
-        slot.appendChild(lbl);
-        // click → set as active cam for the events list; stay in grid
-        // guard: buttons inside the slot handle their own action; don't also switch camera
-        slot.addEventListener('click', ev => {
-          if (ev.target.closest('.grid-fs-btn,.grid-close-btn,[data-restore-slot]')) return;
-          this._switchCamera(i); this._renderCamSwitcher();
-        });
-        // Per-slot fullscreen is desktop-only. On iOS keep custom fullscreen
-        // affordances out of view to avoid handing live MediaStreams to AVPlayer.
-        if(!this._isIOSRecordingPlatform()) {
-          const fsBtn = document.createElement('button');
-          fsBtn.className = 'grid-fs-btn'; fsBtn.title = 'Fullscreen';
-          fsBtn.innerHTML = ICONS.expand;
-          fsBtn.addEventListener('click', ev => { ev.stopPropagation(); this._fullscreen(slot); });
-          slot.appendChild(fsBtn);
-        }
-      }
-      grid.appendChild(slot);
-    }
-  },
-
-_canPlayRecordedMedia(event) {
-    // Frigate events are stored independently of the camera's current live
-    // availability. A camera/doorbell being offline must never prevent an
-    // already-recorded event from opening.
-    if (!event) return false;
-    return !!(
-      event.id ||
-      event.event_id ||
-      event.start_time != null ||
-      event.timestamp != null ||
-      event.thumbnail ||
-      event.thumb
-    );
-  },
-
-_ensureStatusOverlay() {
-    const viewer=this.shadowRoot?.querySelector?.('#viewer');
-    if(!viewer) return null;
-    let overlay=viewer.querySelector('.status-overlay');
-    if(!overlay) {
-      overlay=document.createElement('div');
-      overlay.className='status-overlay hidden';
-      overlay.innerHTML=`
-        <div class="status-card">
-          <div class="status-spinner" hidden></div>
-          <div class="status-icon" hidden></div>
-          <div class="status-title"></div>
-          <div class="status-detail"></div>
-          <button class="status-retry" hidden type="button">Try again</button>
-        </div>`;
-      viewer.appendChild(overlay);
-      overlay.querySelector('.status-retry').addEventListener('click',e=>{
-        e.preventDefault(); e.stopPropagation();
-        this._retryStatusOverlay?.();
-      });
-    }
-    return overlay;
-  },
-
-_setStatusOverlay(kind, title, detail='', opts={}) {
-    const overlay=this._ensureStatusOverlay();
-    if(!overlay) return;
-    const spinner=overlay.querySelector('.status-spinner');
-    const icon=overlay.querySelector('.status-icon');
-    const titleEl=overlay.querySelector('.status-title');
-    const detailEl=overlay.querySelector('.status-detail');
-    const retry=overlay.querySelector('.status-retry');
-    const loading=kind==='loading' || kind==='connecting';
-    const icons={offline:'⌁',error:'!',recording:'▶',info:'i',live:'•'};
-    spinner.hidden=!loading;
-    icon.hidden=loading;
-    icon.textContent=icons[kind] || 'i';
-    titleEl.textContent=title || '';
-    detailEl.textContent=detail || '';
-    retry.hidden=!opts.retry;
-    overlay.classList.toggle('hidden',!title);
-    this._statusOverlayKind=kind;
-    this._statusOverlayRetry=opts.retry ? (opts.retryHandler || null) : null;
-    this._retryStatusOverlay=()=>{
-      if(typeof this._statusOverlayRetry==='function') this._statusOverlayRetry();
-      else if(typeof this._startLive==='function') this._startLive();
-    };
-  },
-
-_clearStatusOverlay() {
-    const overlay=this.shadowRoot?.querySelector?.('.status-overlay');
-    if(overlay) overlay.classList.add('hidden');
-    this._statusOverlayKind=null;
-    this._statusOverlayRetry=null;
-  },
-
-_cameraIsOffline() {
-    const s=this._cameraState || this._activeCam?.state || this._hass?.states?.[this._cameraEntity]?.state;
-    return s === 'unavailable' || s === 'unknown' || s === 'offline';
-  },
-
-_renderStreamCtrl() {
-    if (this._cameraIsOffline() && !this._playing) {
-      this._setStatusOverlay('offline','Camera is offline','Live video is unavailable right now. Your recorded events can still be viewed.',{retry:true});
-    }
-
-    const bar = this.shadowRoot.querySelector('#stream-ctrl-bar'); if (!bar) return;
-    const inGrid = this._viewMode === 'grid';
-    const speaking = !!this._talkSpeaking;
-    const connected = !!this._talkConnected;
-    const talkLbl = (speaking || connected) ? 'End two-way audio' : 'Start two-way audio';
-    const isLive = !this._playing && this.shadowRoot.querySelector('#viewer')?.style.display !== 'flex';
-    const talkAvailable = !!(
-      this._config.two_way_audio &&
-      this._microphonePresent === true &&
-      !this._micForbidden &&
-      (this._talkStreamName() || this._config.frigate_client_id || this._activeCam?.entity)
-    );
-    const talkBtn = (isLive && !inGrid && talkAvailable)
-      ? `<button class="scb-btn talk-btn${speaking ? ' talking' : ''}${connected ? ' connected' : ''}" id="sc-talk" title="${talkLbl}" aria-label="${talkLbl}" aria-pressed="${speaking}" aria-busy="${connected && !speaking}">
-           <canvas class="talk-wave" id="talk-wave" width="72" height="72" aria-hidden="true"></canvas>
-           <span class="talk-mic-glyph" aria-hidden="true">${ICONS.mic}</span>
-         </button>`
-      : '';
-    // Do not render any dedicated fullscreen control on iOS. Native WebKit
-    // fullscreen can destabilize MediaStream-backed live video, and the custom
-    // pseudo-fullscreen button was redundant with the platform's own viewing
-    // affordances. Desktop keeps the whole-grid control where it is useful.
-    const fsBtn = (inGrid && !this._isIOSRecordingPlatform())
-      ? `<button class="scb-btn" id="sc-fs" title="Fullscreen" aria-label="Fullscreen">${ICONS.expand}</button>`
-      : '';
-    // Live is represented internally by an empty gallery mode because the
-    // timeline is the live view. Explicitly derive the active state from _tab
-    // so Live is highlighted on first render and after every return to Live.
-    const activeMediaTab = this._galleryMode || (this._tab === 'live' ? 'live' : '');
-    const hiddenTabs=new Set(this._config.hidden_tabs||[]);
-    const mediaBtn = (id, label, icon) => (id!=='live' && hiddenTabs.has(id)) ? '' : `<button class="media-nav-btn${activeMediaTab===id?' active':''}" data-gallery-tab="${id}" title="${label}" aria-label="${label}">${icon}<span>${label}</span></button>`;
-    const liveBtn = mediaBtn('live','Live',ICONS.live);
-    const clipsBtn = mediaBtn('clips','Clips',ICONS.clips);
-    const recordingsBtn = mediaBtn('recordings','Recordings',ICONS.recordings);
-    const reviewsBtn = mediaBtn('reviews','Reviews',ICONS.reviews);
-    const recDl = (this._playing && this._playing.rec)
-      ? `<button class="scb-btn rec-download-icon${this._downloadRange?' range-active':''}" data-rec-download title="${this._downloadRange?'Adjust download range':'Choose download range'}" aria-label="${this._downloadRange?'Adjust download range':'Choose download range'}" aria-pressed="${this._downloadRange?'true':'false'}">${ICONS.download}</button>`
-      : '';
-    const mediaGroup = `<div class="media-nav-group" role="group" aria-label="Media navigation">${liveBtn}${clipsBtn}${recordingsBtn}${reviewsBtn}</div>`;
-    bar.innerHTML = `${talkBtn}${fsBtn}${mediaGroup}${recDl}`;
-    this._wireTalkButton();
-    if (this._talkSpeaking && this._talkMic) this._startTalkWaveform();
-  },
-
-_setViewMode(mode) {
-    if (mode === 'grid') this._stopTalk(); // no talk button/target in grid view
-    this._viewMode = mode;
-    const card = this.shadowRoot.querySelector('.card');
-    if (card) card.classList.toggle('grid-mode', mode === 'grid');
-    const engWrap = this.shadowRoot.querySelector('#eng-wrap');
-    const gridEl = this.shadowRoot.querySelector('#cam-grid');
-
-    if (mode === 'grid') {
-      if (engWrap) engWrap.style.display = 'none';
-      if (gridEl) { gridEl.style.display = ''; this._mountGrid(); }
-      this._eventsMode = 'all';
-      const lbl = this.shadowRoot.querySelector('#list-label');
-      if (lbl) lbl.textContent = 'All cameras';
-      this._loadAllCamsBackground().then(() => this._renderAll());
-      this._renderStreamCtrl(); // hide mute button in grid mode
-    } else {
-      if (engWrap) engWrap.style.display = '';
-      if (gridEl) gridEl.style.display = 'none';
-      this._eventsMode = 'camera';
-      // A camera selector is meaningless in single-camera browsing. Clear any
-      // selection carried over from Multiview before rendering the gallery.
-      if(this._mediaFilter) this._mediaFilter.camera='all';
-      this._mountEngine();
-      this._renderAll();
-    }
-    this._renderCamSwitcher();
-    this._applyBrowse();
-    this.shadowRoot.querySelectorAll('[data-viewmode]').forEach(p =>
-      p.classList.toggle('active', p.dataset.viewmode === mode));
-  },
-
-async _switchCamera(idx) {
-    if (idx === this._activeCamIdx && this._viewMode === 'single') return;
-    this._downloadRange=null;
-    this._stopTalk(); // talk session is bound to the previous camera's go2rtc stream
-    // Clicking a cam tab while in grid mode switches to single view of that camera
-    if (this._viewMode === 'grid') this._setViewMode('single');
-    const prevEnt = this._activeCam?.entity;
-    if (prevEnt && this._camCache[prevEnt]) {
-      this._camCache[prevEnt].events = this._events;
-      this._camCache[prevEnt].recordings = this._recordings;
-      this._camCache[prevEnt].recordingsLoaded = this._recordingsLoaded;
-      this._camCache[prevEnt].recordingsRangeStart = this._recordingsRangeStart;
-      this._camCache[prevEnt].recordingsRangeEnd = this._recordingsRangeEnd;
-      this._camCache[prevEnt].recordingsLoadedAt = this._recordingsLoadedAt;
-    }
-    this._activeCamIdx = idx;
-    const newEnt = this._activeCam?.entity;
-    if (!this._camCache[newEnt]) this._camCache[newEnt] = mkCamState();
-    if (!this._camCache[newEnt].discovered) await this._discoverOne(newEnt);
-    this._applyCardStyle();
-    this._loadFrigateFilterMetadata();
-    const cached = this._camCache[newEnt];
-    this._events = cached.events||[]; this._recordings = cached.recordings||[]; this._recordingsLoaded = cached.recordingsLoaded===true; this._recordingsRangeStart = Number.isFinite(Number(cached.recordingsRangeStart)) ? Number(cached.recordingsRangeStart) : null; this._recordingsRangeEnd = Number.isFinite(Number(cached.recordingsRangeEnd)) ? Number(cached.recordingsRangeEnd) : null; this._recordingsLoadedAt = Number(cached.recordingsLoadedAt)||0;
-    this._reviews = cached.reviews||[]; this._kept = cached.kept||[];
-    this._renderCamSwitcher(); this._syncStatus();
-    await this._mountEngine();
-    this._renderAll();
-    await this._loadWindow(true);
-  },
-
-_startRotate() {
-    this._stopRotate();
-    const secs = this._config.rotate_seconds || DEFAULT_ROTATE_S;
-    this._rotateTimer = setInterval(() => {
-      const next = (this._activeCamIdx+1) % this._config.cameras.length;
-      this._switchCamera(next);
-    }, secs*1000);
-  },
-
-_stopRotate() { if (this._rotateTimer) { clearInterval(this._rotateTimer); this._rotateTimer=null; } },
-
-_toggleRotate() {
-    if (this._rotateTimer) { this._stopRotate(); this._toast('Auto-rotate off',1800); }
-    else {
-      if (!this._config.rotate_seconds) this._config.rotate_seconds = DEFAULT_ROTATE_S;
-      this._startRotate(); this._toast(`Rotating every ${this._config.rotate_seconds}s`,1800);
-    }
-    this._renderCamSwitcher();
-  }
-};
-
-// ── src/card/talk.js ──
-// Prototype methods grouped by responsibility.
-const talkMethods = {
-_talkStreamName() {
-    const cam = this._activeCam; if (!cam) return null;
-    return cam.go2rtc_stream || this._cc().cam || (cam.entity ? String(cam.entity).split('.').pop() : null) || null;
-  },
-
-async _toggleTalk() {
-    if (this._viewMode === 'grid' || this._playing) return;
-    // A pointerdown on iOS may already have started Talk so that getUserMedia
-    // runs inside the browser's user-activation window. The following click
-    // is only the synthetic follow-up to that same gesture. Consume it rather
-    // than toggling Talk off immediately.
-    if (this._talkGestureStarted) {
-      this._talkGestureStarted = false;
-      return;
-    }
-    if (this._talkState === 'connecting') return;
-    if (this._talkSpeaking) { await this._stopTalk(); return; }
-    this._talkSpeaking=true; this._talkState='connecting'; this._micDesiredMute=false;
-    this._wireTalkButton();
-    this._startTalk().catch(err=>{
-      console.warn('[Frigate] talk start failed',err);
-      this._talkSpeaking=false; this._talkConnected=false; this._talkState='error';
-      this._wireTalkButton(); this._renderStreamCtrl();
-    });
-  },
-
-_endTalk() {
-    this._talkSpeaking=false; this._talkState='idle'; this._micDesiredMute=true;
-    this._stopTalkWaveform();
-    this._setMicMuted(true);
-    this._startMicDisconnectTimer();
-    this._talkConnected=false;
-    this._wireTalkButton(); this._renderStreamCtrl();
-  },
-
-_wireTalkButton() {
-    const btn = this.shadowRoot.querySelector('#sc-talk');
-    if (!btn) return;
-    // iOS Safari/WebKit is stricter about getUserMedia user activation than
-    // desktop browsers. Start microphone acquisition directly from the
-    // pointer gesture, then let the delegated click handler consume the
-    // resulting activation instead of starting a second request. This keeps
-    // Talk one-tap on iOS without bringing back the separate audio button.
-    if (!btn.__frigateTalkPointerBound) {
-      btn.__frigateTalkPointerBound = true;
-      btn.addEventListener('pointerdown', () => {
-        if (this._talkSpeaking || this._talkState === 'connecting') return;
-        this._talkGestureStarted = true;
-        // iOS/WebKit grants media playback privileges to work started directly
-        // inside the user gesture.  Do this BEFORE getUserMedia() yields, so
-        // starting the microphone cannot consume the only activation token.
-        this._unlockLiveAudioFromGesture();
-        this._toggleTalk();
-      }, {passive:true});
-    }
-    const active = !!this._talkSpeaking;
-    const connecting = this._talkState === 'connecting';
-    btn.classList.toggle('talking', active);
-    btn.classList.toggle('connected', !!this._talkConnected);
-    btn.classList.toggle('talk-connecting', connecting);
-    btn.setAttribute('aria-pressed', String(active));
-    btn.setAttribute('aria-busy', String(connecting));
-    btn.setAttribute('aria-label', connecting ? 'Connecting…' : (active ? 'End two-way audio' : 'Start two-way audio'));
-    btn.title = connecting ? 'Connecting…' : (active ? 'End two-way audio' : 'Start two-way audio');
-  },
-
-_unlockLiveAudioFromGesture() {
-    this._liveAudioEnabled = true;
-    const video = this._go2rtcLive?.video || this.shadowRoot?.querySelector('#engine video');
-    if (!video) return;
-    try {
-      video.muted = false;
-      video.volume = 1;
-      video.setAttribute('playsinline', '');
-      const p = video.play();
-      if (p && typeof p.catch === 'function') p.catch(() => {});
-    } catch (_) {}
-  },
-
-_updateTalkButtonVisual() {
-    const btn = this.shadowRoot.querySelector('#sc-talk');
-    if (!btn) return;
-    const speaking = !!this._talkSpeaking;
-    const connected = !!this._talkConnected;
-    btn.classList.toggle('talking', speaking);
-    btn.classList.toggle('connected', connected);
-    btn.setAttribute('aria-pressed', String(speaking));
-    btn.setAttribute('aria-busy', String(connected && !speaking));
-    btn.title = speaking ? 'Release to stop talking' : 'Hold to talk';
-    btn.setAttribute('aria-label', btn.title);
-  },
-
-_pressTalk() {
-    return this._toggleTalk();
-  },
-
-_releaseTalk() {
-    // Tap-to-toggle: pointer release must not stop talkback.
-  },
-
-_startTalkWaveform() {
-    const canvas = this.shadowRoot.querySelector('#talk-wave');
-    if (!canvas || !this._talkMic || !this._talkSpeaking) return;
-    if (this._talkWaveRAF) return;
-
-    const track = this._talkMic.getAudioTracks?.()[0];
-    if (!track) return;
-
-    try {
-      if (!this._talkAudioCtx || this._talkAudioCtx.state === 'closed') {
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        if (!Ctx) return;
-        this._talkAudioCtx = new Ctx();
-      }
-      const ctx = this._talkAudioCtx;
-      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-      if (!this._talkAnalyser) {
-        this._talkAnalyser = ctx.createAnalyser();
-        this._talkAnalyser.fftSize = 128;
-        this._talkAnalyser.smoothingTimeConstant = 0.72;
-        this._talkAudioSource = ctx.createMediaStreamSource(this._talkMic);
-        this._talkAudioSource.connect(this._talkAnalyser);
-      }
-      const analyser = this._talkAnalyser;
-      const data = new Uint8Array(analyser.fftSize);
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      const cssW = 72, cssH = 72;
-      canvas.width = cssW * dpr; canvas.height = cssH * dpr;
-      canvas.style.width = cssW + 'px'; canvas.style.height = cssH + 'px';
-      const c = canvas.getContext('2d');
-      c.setTransform(dpr,0,0,dpr,0,0);
-
-      const draw = () => {
-        this._talkWaveRAF = requestAnimationFrame(draw);
-        if (!this._talkSpeaking || !this.shadowRoot.contains(canvas)) {
-          this._talkWaveRAF = null; return;
-        }
-        analyser.getByteTimeDomainData(data);
-        let rms=0;
-        for (let i=0;i<data.length;i++) {
-          const x=(data[i]-128)/128; rms += x*x;
-        }
-        rms=Math.sqrt(rms/data.length);
-        const energy=Math.min(1, Math.max(.08, rms*4.2));
-
-        c.clearRect(0,0,cssW,cssH);
-        const cx=cssW/2, cy=cssH/2;
-        // iOS 9 Siri-inspired, layered flowing waveform: restrained when quiet,
-        // wider/brighter as the microphone receives speech.
-        const waves=[
-          {a:8+18*energy, f:1.7, phase:.0, alpha:.52},
-          {a:5+14*energy, f:2.25, phase:1.3, alpha:.78},
-          {a:4+11*energy, f:2.9, phase:2.1, alpha:.92},
-        ];
-        waves.forEach((w,wi)=>{
-          c.beginPath();
-          for(let x=0;x<=cssW;x+=2){
-            const nx=(x-cx)/cx;
-            const envelope=Math.max(0,1-Math.abs(nx))*0.95;
-            const y=cy + Math.sin(nx*Math.PI*w.f + w.phase + performance.now()/420*(wi+1)) * w.a * envelope;
-            if(x===0)c.moveTo(x,y); else c.lineTo(x,y);
-          }
-          c.lineWidth=wi===1?2.1:1.5;
-          c.globalAlpha=w.alpha*energy;
-          c.strokeStyle=wi===0?'#5e9cff':(wi===1?'#b66cff':'#ff6b8a');
-          c.stroke();
-        });
-        c.globalAlpha=1;
-        c.beginPath(); c.moveTo(7,cy); c.lineTo(cssW-7,cy);
-        c.lineWidth=1; c.strokeStyle='rgba(255,255,255,.18)'; c.stroke();
-      };
-      draw();
-    } catch (e) {
-      console.warn('[Frigate] waveform init failed', e);
-    }
-  },
-
-_stopTalkWaveform() {
-    if (this._talkWaveRAF) cancelAnimationFrame(this._talkWaveRAF);
-    this._talkWaveRAF = null;
-    if (this._talkAudioSource) { try { this._talkAudioSource.disconnect(); } catch (_) {} this._talkAudioSource=null; }
-    this._talkAnalyser = null;
-    if (this._talkAudioCtx && this._talkAudioCtx.state !== 'closed') {
-      this._talkAudioCtx.close().catch(() => {});
-    }
-    this._talkAudioCtx = null;
-  },
-
-_frigateProxyWsUrl(stream) {
-    // The Frigate HA integration owns the authentication boundary. Its
-    // WebRTCProxyView exposes Frigate's /live/webrtc/api/ws endpoint through
-    // Home Assistant, so Safari never has to reach Frigate:5000/8971 or
-    // go2rtc:1984 directly. This is the same network boundary used by the
-    // Frigate integration's live WebRTC path.
-    if (!stream) return null;
-    const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const clientId = this._activeCam?.frigate_client_id || this._cc()?.clientId || this._config.frigate_client_id || 'frigate';
-    const prefix = `/api/frigate/${encodeURIComponent(String(clientId))}/go2rtc/ws/api/ws`;
-    return `${scheme}//${location.host}${prefix}?src=${encodeURIComponent(stream)}`;
-  },
-
-async _refreshMicrophoneAvailability() {
-    let present=false;
-    if(this._config?.two_way_audio && this._micSupported() && navigator.mediaDevices?.enumerateDevices) {
-      try {
-        const devices=await navigator.mediaDevices.enumerateDevices();
-        present=Array.isArray(devices) && devices.some(d=>d?.kind==='audioinput');
-      } catch (_) {
-        present=false;
-      }
-    }
-    const changed=this._microphonePresent!==present;
-    this._microphonePresent=present;
-    if(!present && this._talkSpeaking) {
-      try { await this._stopTalk(); } catch (_) {}
-    }
-    if(changed && this.isConnected) this._renderStreamCtrl();
-    return present;
-  },
-
-_setupMicrophoneDetection() {
-    if(!this._config?.two_way_audio) {
-      this._microphonePresent=false;
-      if(this._micDeviceChangeHandler && navigator.mediaDevices?.removeEventListener) {
-        try { navigator.mediaDevices.removeEventListener('devicechange',this._micDeviceChangeHandler); } catch (_) {}
-      }
-      this._micDeviceChangeHandler=null;
-      if(this.isConnected) this._renderStreamCtrl();
-      return;
-    }
-    this._refreshMicrophoneAvailability();
-    if(!this._micDeviceChangeHandler && navigator.mediaDevices?.addEventListener) {
-      this._micDeviceChangeHandler=()=>this._refreshMicrophoneAvailability();
-      try { navigator.mediaDevices.addEventListener('devicechange',this._micDeviceChangeHandler); } catch (_) {}
-    }
-  },
-
-_micSupported() { return !!navigator.mediaDevices?.getUserMedia; },
-
-_setMicMuted(muted) {
-    this._micDesiredMute=!!muted;
-    this._talkMic?.getTracks().forEach(t=>t.enabled=!this._micDesiredMute);
-  },
-
-_startMicDisconnectTimer() {
-    if(this._config.two_way_audio_disconnect_seconds===0) return;
-    if(this._micDisconnectTimer) clearTimeout(this._micDisconnectTimer);
-    const sec=this._config.two_way_audio_disconnect_seconds;
-    if(sec>0) this._micDisconnectTimer=setTimeout(()=>this._disconnectMic(),sec*1000);
-  },
-
-_disconnectMic() {
-    if(this._micDisconnectTimer) clearTimeout(this._micDisconnectTimer); this._micDisconnectTimer=null;
-    if(this._talkMic){try{this._talkMic.getTracks().forEach(t=>t.stop());}catch(_){} this._talkMic=null;}
-    if(this._go2rtcLive && !this._playing && this._viewMode !== 'grid') {
-      this._mountGo2RTCVideo(null).catch(e=>console.warn('[Frigate] go2rtc microphone disconnect reconnect failed',e));
-    }
-  },
-
-async _startTalk() {
-    if(!this._micSupported()) throw new Error('Microphone is not supported');
-    if(!this._talkStreamName() || !this._go2rtcEndpoint()) throw new Error('No go2rtc stream is configured');
-    const micPromise = navigator.mediaDevices.getUserMedia({audio:true,video:false});
-    this._talkMicReadyPromise = micPromise;
-    let mic;
-    try {
-      mic = await micPromise;
-      this._microphonePresent = !!mic?.getAudioTracks?.().length;
-      this._micForbidden = false;
-    } catch (err) {
-      const name=String(err?.name||'');
-      if(name==='NotFoundError' || name==='DevicesNotFoundError') this._microphonePresent=false;
-      if(name==='NotAllowedError' || name==='PermissionDeniedError' || name==='SecurityError') this._micForbidden=true;
-      this._renderStreamCtrl();
-      throw err;
-    } finally {
-      if (this._talkMicReadyPromise === micPromise) this._talkMicReadyPromise = null;
-    }
-    // Starting Talk must not call _disconnectMic(): that method intentionally
-    // tears down the microphone and starts a receive-only remount for ending
-    // Talk. Calling it here creates a second asynchronous WebRTC negotiation
-    // and can race the microphone-enabled negotiation on iOS.
-    if(this._micDisconnectTimer) {
-      clearTimeout(this._micDisconnectTimer);
-      this._micDisconnectTimer=null;
-    }
-    if(this._talkMic) {
-      try { this._talkMic.getTracks().forEach(t=>t.stop()); } catch (_) {}
-    }
-    this._talkMic=mic;
-    this._setMicMuted(false);
-
-    // The pointer gesture already unlocked the live video's audio before
-    // getUserMedia() yielded. Re-apply the desired state after the Talk peer
-    // is mounted in case the video element was replaced during remount.
-    this._unlockLiveAudioFromGesture();
-
-    // ACC reconnects the go2rtc VideoRTC session so microphone tracks are
-    // present before createOffer(). We do the same instead of renegotiating an
-    // already-established peer connection.
-    await this._mountGo2RTCVideo(mic);
-    this._talkPC=this._go2rtcLive?.pc||null; this._talkWS=this._go2rtcLive?.ws||null; this._talkUsingLivePC=true;
-    this._talkConnected=true; this._talkState='connected';
-    this._renderStreamCtrl(); this._startTalkWaveform();
-  },
-
-async _waitForPeerUsable(pc, timeout=7000) {
-    if (!pc) return;
-    const usable=()=>pc.connectionState==='connected' || pc.iceConnectionState==='connected' || pc.iceConnectionState==='completed';
-    if (usable()) return;
-    await new Promise((resolve,reject)=>{
-      const t=setTimeout(()=>resolve(),timeout);
-      const fn=()=>{
-        if(usable()){
-          clearTimeout(t);
-          pc.removeEventListener('connectionstatechange',fn);
-          pc.removeEventListener('iceconnectionstatechange',fn);
-          resolve();
-        } else if(pc.connectionState==='failed' || pc.iceConnectionState==='failed'){
-          clearTimeout(t);
-          pc.removeEventListener('connectionstatechange',fn);
-          pc.removeEventListener('iceconnectionstatechange',fn);
-          reject(new Error('WebRTC connection failed'));
-        }
-      };
-      pc.addEventListener('connectionstatechange',fn);
-      pc.addEventListener('iceconnectionstatechange',fn);
-    });
-  },
-
-async _stopTalk() {
-    if(this._micDisconnectTimer) clearTimeout(this._micDisconnectTimer); this._micDisconnectTimer=null;
-    this._stopTalkWaveform();
-    this._talkSpeaking=false; this._talkConnected=false; this._talkState='idle';
-    this._talkMicReadyPromise=null;
-
-    // Do not call _disconnectMic() here: that method intentionally remounts
-    // the live WebRTC session. Doing that and then immediately destroying it
-    // creates a race on iOS and can leave the live peer in a closed state.
-    if(this._talkMic){try{this._talkMic.getTracks().forEach(t=>t.stop());}catch(_){} this._talkMic=null;}
-    this._destroyGo2RTCLive();
-    this._talkPC=null; this._talkWS=null; this._talkUsingLivePC=false; this._talkSender=null;
-    this._renderStreamCtrl();
-
-    // Re-establish ordinary receive-only live video after ending talkback.
-    // This is a separate negotiation and therefore cannot inherit the
-    // sendonly microphone transceiver from the previous session.
-    if(this._viewMode !== 'grid' && !this._playing && this._config.two_way_audio && this._talkStreamName()) {
-      try { await this._mountGo2RTCVideo(null); }
-      catch(e) { console.warn('[Frigate] live restore after talkback failed',e); }
-    }
-  }
-};
-
-// ── src/card/data.js ──
-// Prototype methods grouped by responsibility.
-const dataMethods = {
-_cc() { return this._camCache[this._activeCam?.entity] || mkCamState(); },
-
-async _ws(p) { return parseWs(await this._hass.callWS(p)); },
-
-_normalizeObjectLabel(value) {
-    // Frigate review segments encode a tracked object with a meaningful
-    // sub-label (face identity/custom classifier/etc.) as `<label>-verified`.
-    // That suffix is review metadata, not a separate object class. Keep the
-    // original review payload/sub_labels untouched, but expose/filter the base
-    // object label so `person` and `person-verified` are one logical label.
-    const raw=String(value??'').trim();
-    if(!raw) return '';
-    const normalized=raw.replace(/-verified$/i,'').trim();
-    return normalized || raw;
-  },
-
-_faceValueList(value) {
-    const out=[];
-    const add=(v)=>{
-      if(v==null) return;
-      if(Array.isArray(v)) { for(const item of v) add(item); return; }
-      const text=String(v).trim();
-      if(text) out.push(text);
-    };
-    add(value);
-    return [...new Set(out)];
-  },
-
-_eventFaceList(ev) {
-    // Frigate face recognition exposes a recognized identity through the
-    // event sub_label. Only treat person/face events as face identities so
-    // unrelated custom-classification sub-labels do not pollute this filter.
-    const label=this._normalizeObjectLabel(ev?.label ?? ev?.data?.label ?? '').toLowerCase();
-    if(label!=='person' && label!=='face') return [];
-    return this._faceValueList(ev?.sub_label ?? ev?.data?.sub_label);
-  },
-
-_reviewFaceList(rv) {
-    const labels=this._reviewLabelList(rv).map(x=>String(x).toLowerCase());
-    if(!labels.includes('person') && !labels.includes('face')) return [];
-    const data=rv?.data||{};
-    return this._faceValueList(data.sub_labels ?? data.sub_label);
-  },
-
-_faceDisplayName(value) {
-    return String(value??'').trim().replace(/_/g,' ');
-  },
-
-_eventZoneList(ev) {
-    const out=[];
-    for (const source of [ev?.zones, ev?.entered_zones, ev?.current_zones]) {
-      if (!Array.isArray(source)) continue;
-      for (const zone of source) if(zone!=null && String(zone).trim()) out.push(String(zone));
-    }
-    return [...new Set(out)];
-  },
-
-_reviewLabelList(rv) {
-    const data=rv?.data||{};
-    const values=[];
-    for(const source of [data.objects,data.labels]) {
-      if(!Array.isArray(source)) continue;
-      for(const value of source) {
-        const label=this._normalizeObjectLabel(value);
-        if(label) values.push(label);
-      }
-    }
-    return [...new Set(values)];
-  },
-
-_reviewZoneList(rv) {
-    const data=rv?.data||{};
-    const values=[];
-    for(const source of [data.zones,data.entered_zones]) {
-      if(Array.isArray(source)) for(const value of source) if(value!=null&&String(value).trim()) values.push(String(value));
-    }
-    return [...new Set(values)];
-  },
-
-_mergeLoadedFilterMetadata(cc, events=[], reviews=[]) {
-    if(!cc) return false;
-    const labels=new Set((Array.isArray(cc.filterLabels)?cc.filterLabels:[]).map(v=>this._normalizeObjectLabel(v)).filter(Boolean));
-    const faces=new Set(Array.isArray(cc.filterFaces)?cc.filterFaces:[]);
-    const zones=new Set(Array.isArray(cc.filterZones)?cc.filterZones:[]);
-    const beforeLabels=labels.size, beforeFaces=faces.size, beforeZones=zones.size;
-    for(const ev of (events||[])) {
-      const label=this._normalizeObjectLabel(ev?.label);
-      if(label) labels.add(label);
-      for(const face of this._eventFaceList(ev)) faces.add(face);
-      for(const zone of this._eventZoneList(ev)) zones.add(zone);
-    }
-    for(const rv of (reviews||[])) {
-      for(const label of this._reviewLabelList(rv)) labels.add(label);
-      for(const face of this._reviewFaceList(rv)) faces.add(face);
-      for(const zone of this._reviewZoneList(rv)) zones.add(zone);
-    }
-    cc.filterLabels=[...labels].sort((a,b)=>String(a).localeCompare(String(b)));
-    cc.filterFaces=[...faces].sort((a,b)=>String(a).localeCompare(String(b)));
-    cc.filterZones=[...zones].sort((a,b)=>String(a).localeCompare(String(b)));
-    const changed=labels.size!==beforeLabels||faces.size!==beforeFaces||zones.size!==beforeZones;
-    if(changed && cc===this._cc()) this._refreshOpenFilterSurfaces();
-    return changed;
-  },
-
-_refreshOpenFilterSurfaces() {
-    // Metadata can arrive while iOS owns a native Date/Time picker. Do not
-    // mutate sibling/ancestor DOM in that period: WebKit can close the system
-    // picker even when its exact <input> node remains attached. Queue the
-    // gallery/filter paint and keep the card visually stable until dismissal.
-    if(this._mediaPickerActive && this._galleryMode) {
-      this._mediaPickerPendingFilterRender=true;
-      this._mediaPickerPendingGalleryRender=true;
-      return;
-    }
-    const mp=this.shadowRoot?.querySelector('#media-filter-panel');
-    if(mp?.classList.contains('open')) this._renderMediaFilter();
-    const fp=this.shadowRoot?.querySelector('#filter-panel');
-    if(fp&&fp.style.display!=='none') this._renderFilter();
-    this._renderLegend();
-  },
-
-_filterDisplayName(kind,value,cc=this._cc()) {
-    const key=kind==='label' ? this._normalizeObjectLabel(value) : String(value??'');
-    const read=(state)=>kind==='zone' ? state?.filterZoneNames?.[key] : state?.filterLabelNames?.[key];
-    let named=read(cc);
-    if(!named) {
-      for(const state of Object.values(this._camCache||{})) { named=read(state); if(named) break; }
-    }
-    if(named) return String(named);
-    return cap(key.replace(/_/g,' '));
-  },
-
-async _loadFrigateFilterMetadata(force=false) {
-    const cc=this._cc();
-    const {clientId,cam}=cc;
-    const now=Date.now();
-    // Re-check Frigate periodically instead of treating the first metadata load
-    // as permanent. Labels/zones can be added or removed while HA stays open.
-    const fresh=cc.filterMetaLoaded && (now-Number(cc.filterMetaLoadedAt||0) < 60_000);
-    if(!clientId||!cam||cc.filterMetaLoading||(!force&&fresh)) return;
-    cc.filterMetaLoading=true;
-    // A real metadata refresh rebuilds the set so deleted/renamed zones do not
-    // live forever in the filter UI. Current loaded data is always included.
-    const labels=new Set();
-    const faces=new Set();
-    const zones=new Set();
-    const labelNames={};
-    const zoneNames={};
-    const takeEvent=(ev)=>{
-      const label=this._normalizeObjectLabel(ev?.label);
-      if(label) labels.add(label);
-      for(const face of this._eventFaceList(ev)) faces.add(face);
-      for(const z of this._eventZoneList(ev)) zones.add(z);
-    };
-    const takeReview=(rv)=>{
-      for(const l of this._reviewLabelList(rv)) labels.add(l);
-      for(const face of this._reviewFaceList(rv)) faces.add(face);
-      for(const z of this._reviewZoneList(rv)) zones.add(z);
-    };
-    for(const ev of (this._events||[])) takeEvent(ev);
-    for(const rv of (this._reviews||[])) takeReview(rv);
-
-    try {
-      const settled=await Promise.allSettled([
-        this._ws({type:'frigate/events/get',instance_id:clientId,cameras:[cam],limit:1000}),
-        this._ws({type:'frigate/reviews/get',instance_id:clientId,cameras:[cam],limit:500})
-      ]);
-      if(settled[0].status==='fulfilled') for(const ev of (Array.isArray(settled[0].value)?settled[0].value:[])) takeEvent(ev);
-      if(settled[1].status==='fulfilled') for(const rv of (Array.isArray(settled[1].value)?settled[1].value:[])) takeReview(rv);
-
-      // Deliberately no direct /api/config or /api/labels request here.
-      // The HA Frigate integration does not expose generic passthrough routes for
-      // those endpoints, so labels/zones are learned dynamically from the proxied
-      // event/review datasets instead of bypassing Home Assistant authentication.
-    } catch(_) {
-      // Keep the loaded event/review-derived values even if an enrichment path
-      // is unavailable on this Frigate/HA installation.
-    } finally {
-      cc.filterLabels=[...labels].sort((a,b)=>String(a).localeCompare(String(b)));
-      cc.filterFaces=[...faces].sort((a,b)=>String(a).localeCompare(String(b)));
-      cc.filterZones=[...zones].sort((a,b)=>String(a).localeCompare(String(b)));
-      cc.filterLabelNames=labelNames;
-      cc.filterZoneNames=zoneNames;
-      cc.filterMetaLoaded=true;
-      cc.filterMetaLoadedAt=Date.now();
-      cc.filterMetaLoading=false;
-      this._normalizeLiveFilterState();
-      this._refreshOpenFilterSurfaces();
-    }
-  },
-
-_isNowWindow() {
-    const now=Math.floor(Date.now()/1000);
-    // The LIVE timeline is centered on `now`, so its newest window edge is
-    // intentionally ~5 minutes in the future. Comparing only _winEnd to now
-    // therefore made the card think a true LIVE view was *not* a now-window,
-    // which disabled the periodic Frigate refresh after startup.
-    if (this._timelineFollowingLive) return true;
-    const focus=Number(this._timelineFocusTs);
-    if (Number.isFinite(focus) && Math.abs(focus-now)<120) return true;
-    return Number(this._winStart)<=now+120 && Number(this._winEnd)>=now-120;
-  },
-
-async _loadWindow(replace, initialFullDay=false, timelineOnly=false) {
-    const requestSeq = ++this._timelineLoadSeq;
-    const activeEntity = this._activeCam?.entity || '';
-    const { clientId, cam } = this._cc();
-    if (!clientId || !cam) return;
-    const visibleSpan=Math.max(300,this._winEnd-this._winStart);
-    const now=Math.floor(Date.now()/1000);
-    // Keep the normal timeline fetch tight. A huge prefetch made rapid scrubs
-    // compete with each other on slower Frigate/HA installs and increased the
-    // chance that a late response would arrive after the user had moved again.
-    const buffer=Math.min(30*60,Math.max(visibleSpan,10*60));
-    const browseSpan=Math.max(3600,Number(this._config.window_hours||24)*3600);
-    // Media-browser queries are deliberately independent from the visible
-    // timeline viewport. On wide layouts the timeline remains on-screen while
-    // Clips/Recordings/Reviews occupy the adjacent column, so opening a browser
-    // must never repurpose _winStart/_winEnd (and therefore never zoom the
-    // timeline out to window_hours / 24h). A selected browser date/time range
-    // is used only for the Frigate data query.
-    const mediaBounds=(!timelineOnly && this._galleryMode) ? this._mediaQueryBounds(now) : null;
-    const after=mediaBounds
-      ? mediaBounds.start
-      : (initialFullDay ? Math.max(0, now-browseSpan) : Math.max(0,Math.floor(this._winStart-buffer)));
-    // A lightweight LIVE refresh should describe data Frigate could actually
-    // have finalized, not the intentional future half of the timeline view.
-    const before=mediaBounds
-      ? mediaBounds.end
-      : (initialFullDay ? now : (timelineOnly && this._timelineFollowingLive
-        ? now
-        : Math.floor(this._winEnd+buffer)));
-    // Do not let a slow request for an old scrub position overwrite the
-    // currently visible range. Advanced Camera Card uses the same principle:
-    // timeline range changes are data-source changes, not just CSS changes.
-    try {
-      // Mirror Advanced Camera Card's Frigate engine: event queries explicitly
-      // ask for clips, while the recording browser uses Frigate's hourly
-      // recordings summary. Raw recording segments remain the authoritative
-      // source for timeline drawing and exact playback seeking.
-      // Keep the three Frigate data sources independent. A recordings-summary
-      // command is not available in every HA/Frigate integration combination;
-      // it must never suppress otherwise-valid clips or raw recording segments.
-      const requests=[
-        this._ws({ type:'frigate/events/get', instance_id:clientId, cameras:[cam], after, before, limit:500, has_clip:true }),
-        this._ws({ type:'frigate/recordings/get', instance_id:clientId, camera:cam, after, before })
-      ];
-      // Summary is useful for the Recordings browser, but it is unnecessary
-      // overhead for high-frequency moving-timeline refreshes.
-      if (!timelineOnly) requests.push(
-        this._ws({ type:'frigate/recordings/summary', instance_id:clientId, camera:cam, timezone:this._tz() })
-      );
-      const settled=await Promise.allSettled(requests);
-      const evResult=settled[0], recResult=settled[1], summaryResult=settled[2];
-      if (
-        requestSeq !== this._timelineLoadSeq ||
-        activeEntity !== this._activeCam?.entity ||
-        clientId !== this._cc().clientId ||
-        cam !== this._cc().cam
-      ) return;
-      if (timelineOnly) {
-        const currentFocus=Number.isFinite(Number(this._timelineFocusTs))
-          ? Number(this._timelineFocusTs)
-          : ((this._winStart+this._winEnd)/2);
-        const liveSlack=this._timelineFollowingLive ? 15 : 0;
-        // A fling can travel farther than the prefetch buffer while this request
-        // is in flight. Never replace the visible recording cache with a range
-        // the playhead has already left; the scheduler will immediately request
-        // the newest position instead.
-        if (currentFocus < after || currentFocus > before+liveSlack) {
-          this._timelineDynamicPending=true;
-          return;
-        }
-      }
-      if (evResult.status==='fulfilled') {
-        const incomingEvents = Array.isArray(evResult.value) ? evResult.value : [];
-        const eventMap = new Map((this._events||[]).map(x=>[String(x.id),x]));
-        for (const item of incomingEvents) eventMap.set(String(item.id), item);
-        this._events = [...eventMap.values()];
-      } else {
-        console.warn('[Frigate] clips query failed', evResult.reason);
-      }
-      if (recResult.status==='fulfilled') {
-        this._recordings = Array.isArray(recResult.value) ? recResult.value : [];
-        this._recordingsLoaded = true;
-        // Track the exact wall-clock interval this recording result represents.
-        // A fast fling can move the viewport beyond this interval before the
-        // debounced Frigate query for the new position returns. Unknown time
-        // must never be rendered as a real "No Recording" gap.
-        this._recordingsRangeStart = after;
-        this._recordingsRangeEnd = before;
-        this._recordingsLoadedAt = Date.now();
-      } else {
-        console.warn('[Frigate] recording segments query failed', recResult.reason);
-      }
-      if (!timelineOnly) {
-        if (summaryResult?.status==='fulfilled') {
-          this._recordingBrowse = this._recordingHoursFromSummary(summaryResult.value, after, before);
-        } else {
-          // The raw segments remain a fully usable browser fallback.
-          this._recordingBrowse = this._mergeRecs(this._recordings||[]);
-          console.warn('[Frigate] recordings summary unavailable; using segments', summaryResult?.reason);
-        }
-      }
-      this._timelineDataDirty = true;
-      this._mergeLoadedFilterMetadata(this._cc(), this._events, this._reviews);
-    } catch(e) {
-      if (requestSeq !== this._timelineLoadSeq) return;
-      console.warn('[Frigate] timeline range load failed', e);
-    }
-    const ent=this._activeCam?.entity;
-    if (ent&&this._camCache[ent]) { this._camCache[ent].events=this._events; this._camCache[ent].recordings=this._recordings; this._camCache[ent].recordingsLoaded=this._recordingsLoaded; this._camCache[ent].recordingsRangeStart=this._recordingsRangeStart; this._camCache[ent].recordingsRangeEnd=this._recordingsRangeEnd; this._camCache[ent].recordingsLoadedAt=this._recordingsLoadedAt; }
-    if (!timelineOnly && this._tab==='reviews') await this._loadReviews();
-    if (requestSeq !== this._timelineLoadSeq) return;
-    if (!timelineOnly && this._eventsMode==='all') this._loadAllCamsBackground();
-    // Clips/Recordings are fed by _loadWindow(), including the periodic refresh
-    // timer. While a native picker is open, accept/cache the fresh data but do
-    // not let the normal _renderAll() path mutate any visible card DOM. Reviews
-    // does not use this path, which is why it appeared stable before this fix.
-    if(!timelineOnly && this._mediaPickerActive && this._galleryMode) {
-      this._mediaPickerPendingGalleryRender=true;
-      return;
-    }
-    if (timelineOnly) {
-      // The moving-window refresh is deliberately surgical: reconcile just the
-      // timeline so new events/recording bars/gaps appear while the gesture or
-      // LIVE motion is still happening. Stable-key reconciliation preserves
-      // existing thumbnail DOM and avoids the old pop/reload behavior.
-      this._scheduleTimelineRender(false);
-      this._updateTimelineLive();
-      this._renderRange();
-      this._renderTimelineZoomLabel();
-    } else if (this._timelineInteracting) {
-      this._scheduleTimelineRender(false);
-      this._updateTimelineLive();
-      this._renderRange();
-      this._renderTimelineZoomLabel();
-    } else {
-      this._renderAll();
-    }
-  },
-
-async _loadAllCamsBackground() {
-    const loadSeq=this._timelineLoadSeq;
-    const after=this._winStart, before=this._winEnd;
-    const others = this._config.cameras.filter(c => {
-      const cc = this._camCache[c.entity];
-      return c.entity !== this._activeCam?.entity && cc && cc.discovered;
-    });
-    await Promise.all(others.map(async c => {
-      const cc = this._camCache[c.entity];
-      try {
-        const ev = await this._ws({type:'frigate/events/get',instance_id:cc.clientId,cameras:[cc.cam],after,before,limit:200});
-        cc.events = Array.isArray(ev) ? ev : [];
-        this._mergeLoadedFilterMetadata(cc, cc.events, cc.reviews||[]);
-      } catch(_) {}
-    }));
-    if (loadSeq !== this._timelineLoadSeq || this._eventsMode!=='all') return;
-    this._renderList();
-  },
-
-async _loadKept() {
-    const {clientId,cam}=this._cc();
-    try {
-      const k=await this._ws({type:'frigate/events/get',instance_id:clientId,cameras:[cam],favorites:true,limit:200});
-      this._kept=Array.isArray(k)?k:[];
-      const ent=this._activeCam?.entity; if(ent&&this._camCache[ent]) this._camCache[ent].kept=this._kept;
-    } catch(_) { this._kept=[]; }
-  },
-
-_recordingHoursFromSummary(summary, after, before) {
-    const out=[];
-    if (!Array.isArray(summary)) return out;
-    for (const dayData of summary) {
-      const day=dayData?.day;
-      if (!day || !Array.isArray(dayData.hours)) continue;
-      for (const hourData of dayData.hours) {
-        const hour=Number(hourData?.hour);
-        if (!Number.isFinite(hour) || hour<0 || hour>23) continue;
-        const d=new Date(`${day}T${String(hour).padStart(2,'0')}:00:00`);
-        const start=Math.floor(d.getTime()/1000);
-        const end=start+3600;
-        if (end<=after || start>=before) continue;
-        out.push({start_time:Math.max(start,after),end_time:Math.min(end,before),events:Number(hourData.events||0),camera:this._cc().cam,_summary:true});
-      }
-    }
-    const seen=new Set();
-    return out.filter(r=>{const k=`${r.start_time}-${r.end_time}`;if(seen.has(k))return false;seen.add(k);return true;}).sort((a,b)=>a.start_time-b.start_time);
-  },
-
-async _loadReviews() {
-    const {clientId,cam}=this._cc();
-    try {
-      const now=Math.floor(Date.now()/1000);
-      const currentWindow=this._isNowWindow();
-      const galleryRange=!!this._galleryMode;
-      const browseSpan=Math.max(3600,Number(this._config.window_hours||24)*3600);
-      const mediaBounds=galleryRange ? this._mediaQueryBounds(now) : null;
-      const after=mediaBounds ? mediaBounds.start : (currentWindow ? now-browseSpan : this._winStart);
-      const before=mediaBounds ? mediaBounds.end : (currentWindow ? now : this._winEnd);
-      const r=await this._ws({type:'frigate/reviews/get',instance_id:clientId,cameras:[cam],after,before,limit:500});
-      this._reviews=Array.isArray(r)?r:[];
-      const active=this._cc();
-      active.reviews=this._reviews;
-      this._mergeLoadedFilterMetadata(active, this._events, this._reviews);
-    } catch(_) { this._reviews=[]; }
-  },
-
-async _loadCalendar() {
-    const {clientId,cam}=this._cc();
-    try {
-      const sum=await this._ws({type:'frigate/events/summary',instance_id:clientId,timezone:this._tz()});
-      if(Array.isArray(sum)) this._daysWithActivity=new Set(sum.filter(s=>s.camera===cam&&s.day).map(s=>s.day));
-    } catch(_) {}
-  },
-
-_tz() { return this._hass?.config?.time_zone||Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC'; },
-
-async _subscribe() {
-    const {clientId}=this._cc(); if(!this._hass?.connection||!clientId) return;
-    try {
-      this._unsub=this._hass.connection.subscribeMessage(
-        msg=>{ if(msg?.type==='end'&&this._isNowWindow()) this._scheduleReload(); },
-        {type:'frigate/events/subscribe',instance_id:clientId}
-      );
-    } catch(_) {}
-  },
-
-_scheduleReload() { clearTimeout(this._rt); this._rt=setTimeout(()=>this._loadWindow(true),1500); }
-};
-
-// ── src/card/render-shell.js ──
-// Prototype methods grouped by responsibility.
-const renderShellMethods = {
-_renderShell() {
-    const multiCam = this._config.cameras.length > 1;
-
-    this.shadowRoot.innerHTML = `<style>
+// ── src/styles/shell.js ──
+/**
+ * Shell-level CSS that complements the reusable base card stylesheet.
+ *
+ * The order is intentionally preserved from the original render template: the
+ * status overlay rules come first, then the base STYLES block, followed by
+ * responsive/playback overrides. Keeping CSS outside the DOM renderer makes
+ * _renderShell() readable without changing cascade behavior.
+ */
+const SHELL_STYLES = `
 /* Friendly camera/status overlays */
 .status-overlay {
   position:absolute;
@@ -3271,7 +1506,7 @@ ${STYLES}
 .card .t-preview-thumb img{content-visibility:auto;}
 .card .t-ev{contain:layout paint;}
  .card .t-preview{contain:layout paint;}
- /* v1.5 Scrypted-inspired visual pass: black timeline canvas, quiet gutter,
+ /* Scrypted-inspired visual pass: black timeline canvas, quiet gutter,
     bright blue selected-time rail, and compact detection-story cards. */
  .card .tl-sec{background:#050607;}
  .card .tl-track{background:
@@ -3309,7 +1544,7 @@ ${STYLES}
 }
 
 /* ─────────────────────────────────────────────────────────────
-   v1.2.1 — Refined timeline + timeline-only mobile card
+   Refined timeline + timeline-only mobile card
    The timeline is now the visual endpoint of the card. Everything
    rendered after the legend is intentionally hidden.
    ───────────────────────────────────────────────────────────── */
@@ -3552,7 +1787,7 @@ ${STYLES}
 
 
 /* ─────────────────────────────────────────────────────────────
-   v1.3.0 — Liquid Glass design overhaul
+   Liquid Glass design overhaul
    Visual-only layer. Interaction, data loading, playback, WebRTC,
    microphone lifecycle, timeline math and event handlers are unchanged.
    The goal is an Apple/HIG-inspired layered material system: translucent
@@ -3991,7 +2226,7 @@ ${STYLES}
 }
 
 /* ─────────────────────────────────────────────────────────────
-   v1.4.0 — Scrypted / UniFi-inspired timeline reliability + responsive pass
+   Scrypted / UniFi-inspired timeline reliability + responsive pass
    The timeline remains vertical so the existing gesture/playback contract is
    untouched, but events are now represented by three independent layers:
    recording coverage, event-duration ribbons, and detection markers.
@@ -4111,7 +2346,7 @@ ${STYLES}
 
 
 /* ─────────────────────────────────────────────────────────────
-   v2.0.1 — final visual authority + browser visibility repair
+   final visual authority + browser visibility repair
    This block intentionally comes AFTER every legacy style layer.
    ───────────────────────────────────────────────────────────── */
 .card,.card.theme-light,.card.theme-auto{
@@ -4165,7 +2400,7 @@ ${STYLES}
   .card .media-gallery-grid .et,.card .media-gallery-grid .rev-th{width:72px !important;height:52px !important;flex-basis:72px !important;}
 }
 
-/* v2.0.21 — monochrome timeline glyphs + no sticky edge events. */
+/* monochrome timeline glyphs + no sticky edge events. */
 .card .t-ev .t-duration{
   width:3px !important;
   left:calc(var(--tl-rail) - 1px) !important;
@@ -4243,7 +2478,7 @@ ${STYLES}
 }
 .card .lg.tl-detection-legend i svg,.card .lg.tl-detection-legend i ha-icon{width:100%;height:100%;display:block;fill:currentColor;--mdc-icon-size:100%;}
 
-/* v2.0.23 — Scrypted-style event rail + responsive glyph lane.
+/* Scrypted-style event rail + responsive glyph lane.
    The blue activity marker stays on the rail; detection classes live in a
    separate horizontal lane between the rail and the thumbnail. Bursts share
    one row instead of turning the rail marker itself into a multi-icon pill. */
@@ -4351,12 +2586,12 @@ ${STYLES}
   height:clamp(13px,calc(var(--tl-glyph-size) - 8px),18px) !important;
 }
 
-/* v2.0.28 — timeline-native trim selection for recording downloads. */
-/* v2.0.27 — HA-proxy-only networking + exact-time scrub stills. */
+/* timeline-native trim selection for recording downloads. */
+/* HA-proxy-only networking + exact-time scrub stills. */
 
-/* v2.0.25 — dynamic Frigate filters + resilient/tall-layout thumbnails. */
+/* dynamic Frigate filters + resilient/tall-layout thumbnails. */
 
-/* v2.0.24 — prevent Scrypted-style timeline glyphs from being clipped or
+/* prevent Scrypted-style timeline glyphs from being clipped or
    distorted by the legacy 1px event-row paint containment. */
 .card .t-ev{
   contain:layout !important;
@@ -4397,8 +2632,8 @@ ${STYLES}
   flex:none !important;
 }
 
-/* v2.0.35 — iOS native fullscreen exits directly back to embedded player geometry. */
-/* v2.0.34 — Material Design Icons for Frigate detection glyphs. */
+/* iOS native fullscreen exits directly back to embedded player geometry. */
+/* Material Design Icons for Frigate detection glyphs. */
 .card .t-glyph ha-icon,
 .card .t-badge-glyph ha-icon,
 .card .tl-detection-legend ha-icon,
@@ -4416,11 +2651,11 @@ ${STYLES}
 }
 
 
-/* v2.0.29 — reliable pointer-captured trim handles + correctly signed MP4 downloads. */
-/* v2.0.32 — native picker fix: no forced blur/render on iOS; robust control hit-lock + card freeze. */
-/* v2.0.31 — iOS native picker hardening: sticky picker lock + full gallery DOM freeze. */
-/* v2.0.30 — stable native date/time pickers: preserve picker DOM during gallery/data refreshes. */
-/* v2.0.28 — timeline-native recording trim/download picker. */
+/* reliable pointer-captured trim handles + correctly signed MP4 downloads. */
+/* native picker fix: no forced blur/render on iOS; robust control hit-lock + card freeze. */
+/* iOS native picker hardening: sticky picker lock + full gallery DOM freeze. */
+/* stable native date/time pickers: preserve picker DOM during gallery/data refreshes. */
+/* timeline-native recording trim/download picker. */
 .card .rec-download-icon.range-active{
   color:#fff !important;
   background:rgba(10,132,255,.26) !important;
@@ -4594,8 +2829,8 @@ ${STYLES}
   .card .tl-range-duration{min-width:36px;font-size:9px;}
 }
 
-/* v2.0.37 — Frigate-style exact-time scrub stills through HA-proxied VOD.
-   v2.0.36 — unify LIVE/playhead overlays on the responsive timeline rail.
+/* Frigate-style exact-time scrub stills through HA-proxied VOD.
+   unify LIVE/playhead overlays on the responsive timeline rail.
    Older visual layers left several fixed pixel offsets and an inherited full-width
    playhead span behind. Keep every horizontal reference tied to --tl-rail so the
    scrubber dot, scale ticks and recording rail cannot drift apart as card width
@@ -4673,7 +2908,7 @@ ${STYLES}
   box-shadow:none !important;
 }
 
-/* v2.0.40 — Home Assistant visual-editor preview mode.
+/* Home Assistant visual-editor preview mode.
    HA's hui-card-preview lives in a compact side column. Keep the preview
    representative, but do not let the production timeline/player sizing make
    the editor dialog several screens tall or clip its controls. */
@@ -4818,7 +3053,7 @@ ${STYLES}
 .card.editor-preview .info-row,
 .card.editor-preview .latest{display:none !important;}
 
-/* v2.0.42 — deterministic player geometry.
+/* deterministic player geometry.
    There are now exactly two sizing modes:
    1) no stream_height -> aspect_ratio (including Auto) owns the height;
    2) stream_height/runtime drag -> that explicit height owns the height.
@@ -4857,8 +3092,8 @@ ${STYLES}
   min-height:0 !important;
 }
 
-/* v2.0.45 — geometry survives late HA editor-preview detection.
-   The old v2.0.40 preview rules are intentionally superseded here. Runtime
+/* geometry survives late HA editor-preview detection.
+   The earlier preview rules are intentionally superseded here. Runtime
    inline geometry remains the final authority, while these rules provide a
    stable fallback before JavaScript's first measurement. */
 .card.editor-preview:not(.stream-height-explicit) #eng-wrap{
@@ -4880,7 +3115,7 @@ ${STYLES}
   aspect-ratio:auto !important;margin:0 !important;
 }
 
-/* v2.0.41 — custom accent authority. Several later Scrypted-style passes
+/* custom accent authority. Several later Scrypted-style passes
    had hard-coded iOS blue, so accent_color changed only a subset of controls.
    Route the primary timeline/download selection affordances back through
    --c-acc/derived color-mix values so the editor/YAML setting is real. */
@@ -4893,7 +3128,7 @@ ${STYLES}
 .card .tl-range-boundary,.card .tl-range-start,.card .tl-range-end{color:var(--c-acc) !important;}
 .card .rec-dl-btn{background:var(--c-acc) !important;}
 
-/* v2.0.41 — final theme authority. Older design passes intentionally forced
+/* final theme authority. Older design passes intentionally forced
    black surfaces with !important, which made the Light setting cosmetic. Keep
    video viewports black, but make every card/navigation/browser surface honor
    the resolved light theme. This block is last so it wins the legacy cascade. */
@@ -4956,7 +3191,7 @@ ${STYLES}
 .card.theme-light .grid-slot,
 .card.theme-light .viewer{background:#000 !important;}
 
-/* v2.0.42 — light-theme contrast authority. Earlier dark-first design passes
+/* light-theme contrast authority. Earlier dark-first design passes
    left several icon children and one-pixel detection connectors explicitly
    white, so switching the surrounding surface to white made them disappear.
    Use semantic dark ink for light surfaces while keeping overlay controls that
@@ -5023,13 +3258,13 @@ ${STYLES}
   border-color:rgba(255,255,255,.18) !important;
 }
 
-/* v2.0.47 — trim interaction authority. The range overlay must remain the
+/* trim interaction authority. The range overlay must remain the
    top hit-test surface even with translucent theme materials/backdrop filters. */
 .card .tl-track.vertical .tl-download-range{pointer-events:auto !important;touch-action:none !important;z-index:60 !important;}
 .card .tl-track.vertical .tl-range-boundary{pointer-events:auto !important;z-index:12 !important;}
 .card .tl-track.vertical .tl-range-actions{pointer-events:auto !important;z-index:20 !important;}
 
-/* v2.0.46 — surface material authority. Custom background and/or the card
+/* surface material authority. Custom background and/or the card
    transparency slider use the same final layer so late Light/Dark design passes
    cannot replace the requested glass tint/alpha. Actual video pixels stay black. */
 .card.surface-override{
@@ -5080,7 +3315,7 @@ ${STYLES}
 
 
 /* ─────────────────────────────────────────────────────────────
-   v2.0.52 — responsive dashboard workspace
+   responsive dashboard workspace
    The card responds to its own container width. No viewport media query is
    used for the structural switch, so Lovelace Sections/Grid sizing is honored.
    ───────────────────────────────────────────────────────────── */
@@ -5224,10 +3459,2147 @@ ${STYLES}
 .card #eng-wrap:-webkit-full-screen,
 .card #eng-wrap.live-pseudo-fullscreen{height:100vh !important;height:100dvh !important;max-height:none !important;}
 
-</style>
+`;
+
+// ── src/utils/apply-method-groups.js ──
+/**
+ * Compose method-group property descriptors onto a prototype.
+ *
+ * Using descriptors preserves getters/setters and gives composition roots an
+ * explicit, reviewable override order without side-effect prototype patches.
+ */
+function applyMethodGroups(target, ...groups) {
+  for (const group of groups) {
+    const descriptors = Object.getOwnPropertyDescriptors(group);
+    delete descriptors.__proto__;
+    Object.defineProperties(target, descriptors);
+  }
+}
+
+// ── src/utils/date.js ──
+/**
+ * Small local-date helpers shared by the timeline calendar and editor-facing UI.
+ *
+ * Date-only values are deliberately interpreted in the browser's local timezone;
+ * converting them through UTC would shift the selected day for many users.
+ */
+
+function parseLocalDateInput(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day, 12, 0, 0, 0);
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return {
+    year,
+    month,
+    day,
+    date,
+    value: `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+  };
+}
+
+function localDateValue(timestampSeconds = Date.now() / 1000) {
+  const date = new Date(Number(timestampSeconds) * 1000);
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function formatLocalDateInput(value, includeYear = false) {
+  const parsed = parseLocalDateInput(value);
+  if (!parsed) return '';
+
+  return parsed.date.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+    ...(includeYear ? { year: 'numeric' } : {}),
+  });
+}
+
+// ── src/card/state.js ──
+/**
+ * Initialize all mutable card state in one place.
+ *
+ * The card composes behavior from several focused method groups. Keeping their
+ * shared state here makes lifecycle expectations explicit and prevents feature
+ * modules from silently inventing constructor-only fields.
+ */
+function initializeCardState(card) {
+  // Home Assistant / configuration lifecycle.
+  card._hass = null;
+  card._config = null;
+  card._started = false;
+  card._unsub = null;
+
+  // Camera selection and per-camera caches.
+  card._activeCamIdx = 0;
+  card._camCache = {};
+  card._viewMode = 'single';
+  card._eventsMode = 'camera';
+  card._cardWidth = 0;
+  card._rotateTimer = null;
+
+  // Frigate data currently displayed by the active camera/view.
+  card._events = [];
+  card._recordings = [];
+  card._recordingsLoaded = false;
+  card._recordingsRangeStart = null;
+  card._recordingsRangeEnd = null;
+  card._recordingsLoadedAt = 0;
+  card._reviews = [];
+  card._kept = [];
+  card._recordingBrowse = [];
+  card._loading = false;
+  card._exhausted = false;
+  card._daysWithActivity = new Set();
+
+  // Primary view / media-browser state.
+  card._tab = 'live';
+  card._browseOpen = false;
+  card._showReviewed = false;
+  card._initialMediaStateApplied = false;
+  card._playbackReturnViewMode = null;
+  card._filterLabel = 'all';
+  card._filterFace = 'all';
+  card._filterZone = 'all';
+  card._favOnly = false;
+  card._calMonth = null;
+  card._mediaFilter = {
+    camera: 'all',
+    label: 'all',
+    face: 'all',
+    zone: 'all',
+    favorites: false,
+    reviewed: 'all',
+    severity: 'all',
+    duration: 'all',
+    date: 'all',
+    timeStart: '',
+    timeEnd: '',
+  };
+  card._mediaPickerApplyTimer = null;
+  card._mediaPickerReleaseTimer = null;
+  card._mediaPickerActive = false;
+  card._mediaPickerActiveId = '';
+  card._mediaPickerPendingFilterRender = false;
+  card._mediaPickerPendingGalleryRender = false;
+
+  // Timeline viewport, caches, interaction and request generations.
+  card._winStart = 0;
+  card._winEnd = 0;
+  card._timelineSelected = null;
+  card._timelineFocusTs = null;
+  card._scrubTarget = null;
+  card._timelineZoom = 6;
+  card._timelineZoomMin = 1 / 24;
+  card._timelineZoomMax = 12;
+  card._timelineLoadSeq = 0;
+  card._timelineDataSeq = 0;
+  card._timelineSeekSeq = 0;
+  card._timelineDynamicTimer = null;
+  card._timelineDynamicTimerMode = '';
+  card._timelineDynamicActive = false;
+  card._timelineDynamicPending = false;
+  card._timelineDynamicLastAt = 0;
+  card._timelineThumbCache = new Map();
+  card._timelineEventCache = new Map();
+  card._timelineDataDirty = false;
+  card._scrubAbort = null;
+  card._scrollAbort = null;
+
+  // Recorded/event playback lifecycle.
+  card._playing = null;
+  card._playingHour = null;
+  card._playSeq = 0;
+  card._playbackLoadSeq = 0;
+  card._playbackTimer = null;
+  card._activePlaybackCleanup = null;
+  card._playbackSession = null;
+  card._downloadRange = null;
+
+  // Live video / fullscreen state.
+  card._engine = null;
+  card._streamMuted = true;
+  card._go2rtcMountPromise = null;
+  card._go2rtcLive = null;
+  card._liveAudioEnabled = false;
+  card._liveAudioAvailable = false;
+  card._liveFsMirror = null;
+  card._liveFsRecoverySeq = 0;
+  card._livePseudoFullscreen = false;
+  card._rtcDebug = { answer: '', candidates: [], tracks: [], errors: [] };
+
+  // Two-way audio / microphone state.
+  card._talkActive = false;
+  card._talkPC = null;
+  card._talkWS = null;
+  card._talkMic = null;
+  card._talkAudio = null;
+  card._talkUsingLivePC = false;
+  card._talkMicReadyPromise = null;
+  card._micDesiredMute = true;
+  card._micForbidden = false;
+  card._microphonePresent = null;
+  card._micDeviceChangeHandler = null;
+  card._micDisconnectTimer = null;
+
+  // DOM/event bookkeeping.
+  card._domCache = {};
+  card._clickListenerBound = false;
+  card._mediaImageListenerBound = false;
+}
+
+// ── src/card/core.js ──
+/**
+ * Home Assistant lifecycle, normalized configuration and shared card-level utilities.
+ */
+const coreMethods = {
+setConfig(config) {
+    config = (config && typeof config === 'object') ? config : {};
+    let cameras = [];
+    const rootGo2rtc = (config.go2rtc && typeof config.go2rtc === 'object') ? config.go2rtc : {};
+    if (Array.isArray(config.cameras)) {
+      cameras = config.cameras.map(c => {
+        if (typeof c === 'string') return { entity:c, name:null, frigate_client_id:null, go2rtc_stream:null };
+        const g = (c?.go2rtc && typeof c.go2rtc === 'object') ? c.go2rtc : {};
+        return { entity:c?.entity || c?.camera_entity || c?.camera || '', name:c?.name||null, frigate_client_id:c?.frigate_client_id || g.frigate_client_id || null, go2rtc_stream:c?.go2rtc_stream || g.stream || null };
+      }).filter(c => c.entity);
+    }
+    const singleEntity = config.camera_entity || config.entity || config.camera;
+    if (!cameras.length && singleEntity) cameras = [{ entity:singleEntity, name:config.title||null, frigate_client_id:config.frigate_client_id || rootGo2rtc.frigate_client_id || null, go2rtc_stream:config.go2rtc_stream || rootGo2rtc.stream || null }];
+    this._configError = cameras.length ? null : 'Select a Frigate camera entity.';
+    if (!cameras.length) cameras = [{ entity:'', name:null, go2rtc_stream:null, frigate_client_id:null }];
+    if (cameras.length > 4) cameras = cameras.slice(0, 4);
+
+    const timelineIn = (config.timeline && typeof config.timeline === 'object') ? config.timeline : {};
+    const downloadIn = (config.download && typeof config.download === 'object') ? config.download : {};
+    const mediaIn = (config.media && typeof config.media === 'object') ? config.media : {};
+    const num = (v, fallback, lo, hi) => { const n=Number(v); return Number.isFinite(n) ? Math.max(lo,Math.min(hi,n)) : fallback; };
+    const timeline = {
+      enabled: timelineIn.enabled !== false,
+      default_minutes: num(timelineIn.default_minutes,10,5,60),
+      show_thumbnails: timelineIn.show_thumbnails !== false,
+      show_glyphs: timelineIn.show_glyphs !== false,
+      show_legend: timelineIn.show_legend !== false,
+      show_zoom_controls: timelineIn.show_zoom_controls !== false,
+      show_filter_button: timelineIn.show_filter_button !== false,
+      show_calendar_button: timelineIn.show_calendar_button !== false,
+      clustering: timelineIn.clustering !== false,
+      same_label_cluster_seconds: num(timelineIn.same_label_cluster_seconds,12,0,120),
+      visual_cluster_max_seconds: num(timelineIn.visual_cluster_max_seconds,60,0,300),
+      glyph_min_px: num(timelineIn.glyph_min_px,20,12,40),
+      glyph_max_px: num(timelineIn.glyph_max_px,30,12,48),
+      max_glyphs: Math.round(num(timelineIn.max_glyphs,3,1,6)),
+      max_thumbnails: Math.round(num(timelineIn.max_thumbnails,12,0,24)),
+      thumbnail_size: Math.round(num(timelineIn.thumbnail_size,84,48,140)),
+    };
+    if(timeline.glyph_max_px<timeline.glyph_min_px) timeline.glyph_max_px=timeline.glyph_min_px;
+    const downloadMaxMinutes=num(downloadIn.max_range_minutes,120,1,720);
+    const download = { default_range_seconds: Math.min(Math.round(downloadMaxMinutes*60),Math.round(num(downloadIn.default_range_seconds,60,2,1800))), max_range_minutes: downloadMaxMinutes };
+    const reviewedDefault=['all','unreviewed','reviewed'].includes(mediaIn.reviewed_default) ? mediaIn.reviewed_default : 'all';
+    const media = { reviewed_default: reviewedDefault };
+    const rawAspect=config.aspect_ratio==null || String(config.aspect_ratio).trim()==='' ? 'auto' : String(config.aspect_ratio).trim();
+    const aspectValid = rawAspect==='auto' || /^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/.test(rawAspect) || (Number.isFinite(Number(rawAspect)) && Number(rawAspect)>0);
+    const streamHeightNum=Number(config.stream_height);
+    const hiddenTabs = Array.isArray(config.hidden_tabs) ? config.hidden_tabs.filter(x=>['clips','recordings','reviews'].includes(String(x))) : [];
+    const requestedDefaultTab = ['live','clips','recordings','reviews'].includes(String(config.default_tab||'')) ? String(config.default_tab) : 'live';
+    const defaultTab = requestedDefaultTab !== 'live' && hiddenTabs.includes(requestedDefaultTab) ? 'live' : requestedDefaultTab;
+
+    this._config = {
+      cameras,
+      window_hours: Math.max(1,Math.min(720,Number(config.window_hours)||24)),
+      refresh_seconds: Math.max(15,Math.min(3600,Number(config.refresh_seconds)||45)),
+      rotate_seconds: num(config.rotate_seconds,0,0,3600),
+      rotate_on_load: config.rotate_on_load === true && cameras.length > 1,
+      default_view: (config.default_view === 'grid' && cameras.length > 1) ? 'grid' : 'single',
+      hidden_tabs: hiddenTabs,
+      default_tab: defaultTab,
+      autoplay_latest_clip: config.autoplay_latest_clip === true,
+      stream_height: Number.isFinite(streamHeightNum) && streamHeightNum>0 ? Math.max(20,Math.min(100,streamHeightNum)) : null,
+      stream_type: config.stream_type === 'hls' ? 'hls' : 'webrtc',
+      aspect_ratio: aspectValid ? rawAspect : 'auto',
+      stream_resizable: config.stream_resizable === true,
+      theme: ['light','dark','auto'].includes(config.theme) ? config.theme : 'dark',
+      accent_color: config.accent_color || null,
+      bg_color: config.bg_color || null,
+      transparency: num(config.transparency ?? config.card_transparency ?? config.background_transparency,0,0,100),
+      timeline,
+      download,
+      media,
+      frigate_client_id: config.frigate_client_id || rootGo2rtc.frigate_client_id || cameras.find(c => c.frigate_client_id)?.frigate_client_id || null,
+      two_way_audio: config.two_way_audio === true,
+      two_way_audio_disconnect_seconds: Number.isFinite(Number(config.two_way_audio_disconnect_seconds)) ? Math.max(0, Number(config.two_way_audio_disconnect_seconds)) : 90,
+    };
+    this._browseOpen = false;
+    this._showReviewed = this._config.media.reviewed_default !== 'unreviewed';
+    if(this._mediaFilter) this._mediaFilter.reviewed=this._config.media.reviewed_default;
+    if (this._galleryMode && this._config.hidden_tabs.includes(this._galleryMode)) { this._galleryMode=''; this._tab='live'; }
+    for (const c of cameras) { if (!this._camCache[c.entity]) this._camCache[c.entity] = mkCamState(); }
+    this._renderShell();
+    this._setupMicrophoneDetection();
+  },
+
+set hass(hass) {
+    this._hass = hass;
+    if (!this._config) return;
+    if (!this._started) { this._started = true; this._start(); return; }
+    if (this._engine) {
+      try { this._engine.hass = hass; } catch(_) {}
+      const ent = this._activeCam?.entity;
+      const newState = hass.states[ent]?.state;
+      if (ent && newState !== this._lastEngineState) {
+        this._lastEngineState = newState;
+        if ('stateObj' in this._engine) { try { this._engine.stateObj = this._streamStateObj(ent); } catch(_) {} }
+      }
+    }
+    if(!(this._mediaPickerActive && this._galleryMode)) {
+      this._syncStatus();
+      if (this._config.theme === 'auto') this._applyCardStyle();
+    }
+  },
+
+get _activeCam() { return this._config?.cameras[this._activeCamIdx] || this._config?.cameras[0]; },
+
+async _applyInitialMediaState() {
+    if(this._initialMediaStateApplied) return;
+    this._initialMediaStateApplied=true;
+    const tab=this._config?.default_tab||'live';
+    if(tab==='live') return;
+    await this._setGalleryMode(tab);
+    if(tab!=='clips' || !this._config?.autoplay_latest_clip || this._galleryMode!=='clips') return;
+    const source=this._eventsMode==='all'?this._allDisplayEvents():this._events;
+    const latest=this._filterMediaEvents(source).filter(ev=>ev?.has_clip).sort((a,b)=>Number(b.start_time||0)-Number(a.start_time||0))[0];
+    if(latest) await this._showClip(latest);
+  },
+
+_isEditorPreview() {
+    let node=this;
+    const editorTags=new Set(['hui-card-preview','hui-dialog-edit-card','hui-card-element-editor','hui-card-editor','hui-dialog-edit-card']);
+    for(let i=0;i<14 && node;i++){
+      const tag=String(node.tagName||'').toLowerCase();
+      if(editorTags.has(tag)) return true;
+      const cls=String(node.className||'');
+      if(/(^|\s)(card-preview|preview-card|edit-card-preview)(\s|$)/i.test(cls)) return true;
+      if(node.parentElement){ node=node.parentElement; continue; }
+      const root=node.getRootNode?.();
+      node=(root && root.host && root.host!==node) ? root.host : null;
+    }
+    return false;
+  },
+
+getCardSize() { return 10; },
+getGridSize() { return { columns: 2, rows: 3 }; },
+
+disconnectedCallback() {
+    this._stopRotate(); this._cancelActivePlayback(); this._stopTalk();
+    if (this._refresh) clearInterval(this._refresh);
+    if (this._timelineClockTimer) clearInterval(this._timelineClockTimer);
+    clearTimeout(this._timelineDataTimer); clearTimeout(this._timelineDynamicTimer); this._timelineDynamicTimer=null; this._timelineDynamicPending=false;
+    clearTimeout(this._wt); clearTimeout(this._mediaPickerApplyTimer); clearTimeout(this._mediaPickerReleaseTimer);
+    this._mediaPickerActive=false; this._mediaPickerActiveId=''; this._mediaPickerPendingFilterRender=false; this._removeLiveFsMirror();
+    if (this._scrubAbort) { try { this._scrubAbort.abort(); } catch(_) {} this._scrubAbort=null; }
+    if (this._scrollAbort) { try { this._scrollAbort.abort(); } catch(_) {} this._scrollAbort=null; }
+    ++this._timelineLoadSeq; ++this._timelineDataSeq; ++this._timelineSeekSeq;
+    if (this._unsub) { try { this._unsub.then(u=>u&&u()); } catch(_) {} this._unsub=null; }
+    if (this._timelineResizeRaf) cancelAnimationFrame(this._timelineResizeRaf); this._timelineResizeRaf=0;
+    if (this._ro) this._ro.disconnect();
+    if (this._micDeviceChangeHandler && navigator.mediaDevices?.removeEventListener) { try { navigator.mediaDevices.removeEventListener('devicechange', this._micDeviceChangeHandler); } catch (_) {} }
+    this._micDeviceChangeHandler=null;
+  },
+
+async _start() {
+    if (this._configError || !this._activeCam?.entity) { this._renderAll(); return; }
+    await this._discoverAll();
+    this._setupMicrophoneDetection();
+    this._loadFrigateFilterMetadata();
+    const now = Math.floor(Date.now()/1000);
+    this._timelineFocusTs = now;
+    const initialTimelineSpan=this._timelineDefaultSpanSeconds();
+    this._winStart = now - initialTimelineSpan/2; this._winEnd = now + initialTimelineSpan/2; this._timelineZoom = 3600/initialTimelineSpan;
+    this._timelineFollowingLive = true; this._timelineWasLiveBeforeGesture = false; this._timelineLiveCrossed = false;
+    if (this._config.default_view === 'grid' && this._config.cameras.length > 1) this._setViewMode('grid');
+    await this._mountEngine();
+    await this._loadWindow(true, true);
+    await this._applyInitialMediaState();
+    this._loadCalendar(); this._subscribe();
+    this._refresh = setInterval(() => { if (this._isNowWindow()) this._loadWindow(true); this._loadFrigateFilterMetadata(); }, this._config.refresh_seconds*1000);
+    if (this._timelineClockTimer) clearInterval(this._timelineClockTimer);
+    this._timelineClockTimer = setInterval(() => {
+      if (!this.isConnected || this._galleryMode || this._timelineInteracting) return;
+      this._updateTimelineLive();
+      if (this._timelineFollowingLive) this._scheduleTimelineDynamicData('live');
+    }, 1000);
+    if (this._config.rotate_on_load === true && this._config.cameras.length > 1) this._startRotate();
+    this._setupResizeObserver(); this._stabilizeInitialTimeline();
+  }
+};
+
+// ── src/card/live/discovery.js ──
+/**
+ * Camera discovery and Home Assistant camera-entity adaptation.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const liveDiscoveryMethods = {
+async _discoverAll() { await Promise.all(this._config.cameras.map(c => this._discoverOne(c.entity))); },
+
+async _discoverOne(entity) {
+    const cache = this._camCache[entity] || mkCamState();
+    if (cache.discovered) return;
+    const ent = this._hass.states[entity]; if (!ent) return;
+    cache.clientId = ent.attributes?.client_id || ent.attributes?.mqtt_client_id || 'frigate';
+    cache.cam = ent.attributes?.camera_name || entity.replace(/^camera\./,'');
+    cache.discovered = true;
+    this._camCache[entity] = cache;
+  },
+
+_streamStateObj(entity) {
+    const raw = this._hass.states[entity]; if (!raw) return null;
+    const attrs = { ...raw.attributes };
+    if (this._config.stream_type === 'hls') delete attrs.frontend_stream_type;
+    else attrs.frontend_stream_type = 'web_rtc';
+    return { ...raw, attributes: attrs };
+  }
+};
+
+// ── src/card/live/engine.js ──
+/**
+ * Live engine mounting and teardown for HA camera streams and go2rtc.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const liveEngineMethods = {
+_unmountEngine() {
+    ++this._liveFsRecoverySeq;
+    if (this._liveFsCleanup) {
+      try { this._liveFsCleanup(); } catch (_) {}
+      this._liveFsCleanup = null;
+    }
+    // Never leave the visual iOS fullscreen shell behind when the live engine
+    // is intentionally unmounted (camera switch, playback, card teardown).
+    const wrap=this.shadowRoot?.querySelector('#eng-wrap');
+    if(wrap){
+      wrap.classList.remove('live-pseudo-fullscreen');
+      wrap.querySelector('.live-fs-exit')?.remove();
+    }
+    this._livePseudoFullscreen=false;
+    this._removeLiveFsMirror();
+    const engine = this.shadowRoot?.querySelector('#engine');
+    if (engine) engine.innerHTML = '';
+    this._engine = null;
+  },
+
+async _mountEngine() {
+    const slot = this.shadowRoot.querySelector('#engine'); if (!slot) return;
+    const entity = this._activeCam?.entity; if (!entity) return;
+    slot.innerHTML = '<div class="ph skel-stream"></div>';
+    this._engine = null;
+
+    // When two-way audio is enabled and a go2rtc source is configured, use the
+    // same Frigate-proxied go2rtc WebRTC session for video, camera audio and microphone send.
+    // This mirrors Advanced Camera Card's VideoRTC architecture and avoids a
+    // second talkback peer competing with the live player.
+    if (this._config.two_way_audio && this._talkStreamName() && this._go2rtcEndpoint()) {
+      try {
+        // If Talk is being started or is already active, never create a
+        // receive-only peer while the microphone acquisition is in flight.
+        // On iOS this can race a render/remount and permanently leave the
+        // successful peer with no sendonly audio transceiver.
+        if (this._talkSpeaking && this._talkMicReadyPromise) {
+          try { await this._talkMicReadyPromise; } catch (_) {}
+        }
+        await this._mountGo2RTCVideo(this._talkSpeaking ? this._talkMic : null);
+        return;
+      } catch (e) {
+        console.warn('[Frigate] go2rtc live provider failed, falling back to HA camera stream', e);
+        this._destroyGo2RTCLive();
+      }
+    }
+
+    const stateObj = this._streamStateObj(entity);
+    if (!stateObj) return;
+    const s = document.createElement('ha-camera-stream');
+    s.hass = this._hass;
+    s.stateObj = stateObj;
+    s.controls = true;
+    s.muted = this._streamMuted;
+    s.style.cssText = 'width:100%;height:100%;display:block';
+    slot.innerHTML = ''; slot.appendChild(s);
+    this._engine = s;
+    // iOS native video fullscreen can interrupt a live WebRTC MediaStream.
+    // Wire the nested HA player as soon as it exists; the helper retries until
+    // ha-camera-stream has created its internal <video> element.
+    this._wireLiveFsNudge(s);
+    this._renderStreamCtrl();
+  }
+};
+
+// ── src/card/live/webrtc.js ──
+/**
+ * Frigate-proxied go2rtc WebRTC negotiation, diagnostics, and cleanup.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const liveWebRtcMethods = {
+_rtcDbg(_label, _data = null) {},
+
+_rtcSafe(v) {
+    if (v == null) return v;
+    if (typeof v === 'string') return v.length > 1200 ? v.slice(0,1200) + '…' : v;
+    if (v instanceof Error) return { name:v.name, message:v.message, stack:v.stack };
+    try { return JSON.parse(JSON.stringify(v)); } catch (_) { return String(v); }
+  },
+
+_rtcRedactUrl(value) {
+    try {
+      const u = new URL(String(value), location.origin);
+      if (u.searchParams.has('authSig')) u.searchParams.set('authSig', '[redacted]');
+      return u.toString();
+    } catch (_) { return String(value ?? ''); }
+  },
+
+_rtcAudioDiagnostics(pc, microphoneStream) {
+    try {
+      const tx = pc?.getTransceivers?.() || [];
+      const audioTx = tx.filter(t => t.sender?.track?.kind === 'audio' || t.receiver?.track?.kind === 'audio');
+      return {
+        microphoneTracks: microphoneStream?.getAudioTracks?.().map(t => ({ id:t.id, readyState:t.readyState, enabled:t.enabled, muted:t.muted, label:t.label })) || [],
+        audioTransceivers: audioTx.map((t,i) => ({
+          i, mid:t.mid, direction:t.direction, currentDirection:t.currentDirection,
+          senderTrack:t.sender?.track ? {id:t.sender.track.id,readyState:t.sender.track.readyState,enabled:t.sender.track.enabled,muted:t.sender.track.muted} : null,
+          senderKind:t.sender?.track?.kind || null, receiverKind:t.receiver?.track?.kind || null
+        }))
+      };
+    } catch (e) { return {error:this._rtcSafe(e)}; }
+  },
+
+async _rtcAudioStats(pc) {
+    try {
+      const stats = await pc?.getStats?.();
+      const out = [];
+      stats?.forEach(r => {
+        if (r.type === 'outbound-rtp' && r.kind === 'audio') out.push({
+          id:r.id, kind:r.kind, packetsSent:r.packetsSent, bytesSent:r.bytesSent,
+          packetsLost:r.packetsLost, targetBitrate:r.targetBitrate, codecId:r.codecId,
+          remoteId:r.remoteId
+        });
+      });
+      return out;
+    } catch (e) { return [{error:this._rtcSafe(e)}]; }
+  },
+
+async _signFrigateWsUrl(endpoint, src) {
+    const raw = String(endpoint || '');
+    if (!raw) throw new Error('Missing go2rtc WebSocket endpoint');
+    let u;
+    try { u = new URL(raw); } catch (_) { throw new Error('Invalid go2rtc WebSocket endpoint'); }
+    const pageWsOrigin = location.origin.replace(/^http/i, 'ws');
+    const sameOrigin = u.origin === pageWsOrigin;
+    if (!sameOrigin || !u.pathname.startsWith('/api/frigate/')) {
+      throw new Error('Refusing non-Home-Assistant Frigate WebSocket endpoint');
+    }
+    const path = `${u.pathname}${u.search}${u.search ? '&' : '?'}src=${encodeURIComponent(src)}`;
+    if (!this._hass?.callWS) throw new Error('Home Assistant connection is unavailable for WebSocket authentication');
+    const signed = await this._hass.callWS({ type:'auth/sign_path', path, expires:300 });
+    if (!signed?.path) throw new Error('Home Assistant did not return a signed WebSocket path');
+    const signedUrl = new URL(signed.path, location.origin);
+    signedUrl.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return { url:signedUrl.toString(), authMode:'ha_signed_path', signedPath:signed.path };
+  },
+
+_rtcSdpSummary(sdp) {
+    if (!sdp) return null;
+    const lines=sdp.split(/\r?\n/);
+    const media=lines.filter(x=>/^m=|^a=mid:|^a=sendrecv|^a=sendonly|^a=recvonly|^a=inactive|^a=rtpmap:|^a=fmtp:|^a=ice-ufrag:|^a=ice-pwd:|^a=fingerprint:|^a=setup:|^a=candidate:/.test(x));
+    return media.join('\n');
+  },
+
+_go2rtcEndpoint() {
+    // Browser-side live WebRTC is always routed through the Frigate Home
+    // Assistant integration. Never honor a direct go2rtc/Frigate host URL:
+    // doing so breaks remote access, SSL/auth setups, HA Companion networking,
+    // and multi-instance routing.
+    const discovered=this._cc?.()?.clientId;
+    const clientId = this._activeCam?.frigate_client_id || discovered || this._config.frigate_client_id || 'frigate';
+    return `${location.origin.replace(/^http/i,'ws')}/api/frigate/${encodeURIComponent(String(clientId))}/go2rtc/ws/api/ws`;
+  },
+
+async _mountGo2RTCVideo(microphoneStream=null) {
+    // A lifecycle/render-triggered remount must inherit the active Talk
+    // microphone. Otherwise it can replace a working sendonly peer with a
+    // receive-only peer, which is exactly what the iOS diagnostic exposed.
+    if (!microphoneStream && this._talkSpeaking && this._talkMic) microphoneStream=this._talkMic;
+    if (this._go2rtcMountPromise) {
+      try { await this._go2rtcMountPromise; } catch (_) {}
+      if (this._go2rtcLive?.pc && (!microphoneStream || this._microphoneTransceiver)) return this._go2rtcLive.video;
+    }
+    const runMount = async () => {
+    const slot=this.shadowRoot.querySelector('#engine');
+    if(!slot) throw new Error('Live engine not available');
+
+    // Preserve the existing live <video> element when Talk starts.  Replacing
+    // it after getUserMedia() resolves loses the original user-activation
+    // context on Safari/iOS (and can also interrupt desktop autoplay).  The
+    // same media element can safely receive the new WebRTC MediaStream after
+    // the microphone-enabled peer is negotiated.
+    const existingVideo = slot.querySelector('video');
+    this._destroyGo2RTCLive(!!existingVideo);
+    const video=existingVideo || document.createElement('video');
+    video.autoplay=true; video.playsInline=true; video.controls=true; video.preload='auto';
+    if (!existingVideo) video.muted=!this._liveAudioEnabled;
+    video.volume=1;
+    video.style.cssText='width:100%;height:100%;display:block';
+
+    if (!existingVideo) { slot.innerHTML=''; slot.appendChild(video); }
+    this._watchAutoAspectMedia(video);
+
+    // Port the proven Advanced Camera Card/go2rtc Safari flow: ordinary live
+    // playback has only recvonly video/audio. The microphone is added only
+    // when Talk is actually active, matching ACC's documented call lifecycle.
+    const pc=new RTCPeerConnection({bundlePolicy:'max-bundle',iceServers:[{urls:['stun:stun.cloudflare.com:3478','stun:stun.l.google.com:19302']}],sdpSemantics:'unified-plan'});
+    pc.addEventListener('connectionstatechange',()=>this._rtcDbg('connectionstatechange',{state:pc.connectionState,ice:pc.iceConnectionState}));
+    let micTx=null;
+    if(microphoneStream?.getAudioTracks()?.length) micTx=pc.addTransceiver(microphoneStream.getAudioTracks()[0],{direction:'sendonly'});
+    pc.addTransceiver('video',{direction:'recvonly'});
+    pc.addTransceiver('audio',{direction:'recvonly'});
+    this._liveAudioAvailable=false; this._microphoneTransceiver=micTx;
+
+    const endpoint=this._go2rtcEndpoint(); const src=this._talkStreamName();
+    if(!endpoint || !src) throw new Error('Missing go2rtc endpoint or stream');
+    let signedWs;
+    try {
+      signedWs=await this._signFrigateWsUrl(endpoint,src);
+    } catch (e) {
+      throw e;
+    }
+    const wsUrl=signedWs.url;
+    this._rtcDbg('WS CONSTRUCTOR INPUT', {
+      url:this._rtcRedactUrl(wsUrl),
+      endpoint:this._rtcRedactUrl(endpoint),
+      stream:src,
+      authMode:signedWs.authMode,
+      signedPath: signedWs.authMode==='ha_signed_path' ? '[present]' : null,
+      pageOrigin:location.origin,
+      pageProtocol:location.protocol,
+      pageHref:location.href.split('#')[0],
+      sameOrigin:(()=>{try{return new URL(endpoint).origin===location.origin.replace(/^http/i,'ws')}catch(_){return null}})(),
+      cookiesPresent:!!document.cookie,
+      cookieNames:document.cookie ? document.cookie.split(';').map(x=>x.split('=')[0].trim()).filter(Boolean) : []
+    });
+    let ws;
+    try {
+      ws=new WebSocket(wsUrl);
+    } catch (e) {
+      throw e;
+    }
+    ws.binaryType='arraybuffer';
+    this._go2rtcLive={video,pc,ws,stream:null,microphoneStream}; this._engine=video; this._talkPC=pc; this._talkWS=ws; this._talkUsingLivePC=true;
+    video.setAttribute('playsinline','');
+    video.setAttribute('webkit-playsinline','');
+    // Native AVPlayer fullscreen is unreliable for a video.srcObject WebRTC
+    // feed on iOS. Keep this exact element/peer alive and convert native
+    // fullscreen attempts into our visual fullscreen shell instead.
+    this._wireLiveFsNudge(video);
+
+    pc.addEventListener('icecandidate',ev=>{
+      if(ev.candidate && ws.readyState===WebSocket.OPEN) { const c=ev.candidate.toJSON(); this._rtcDebug.candidates.push({direction:'out',candidate:c}); this._rtcDbg('send ICE candidate',c); ws.send(JSON.stringify({type:'webrtc/candidate',value:c.candidate})); }
+      if(!ev.candidate && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({type:'webrtc/candidate',value:''}));
+    });
+
+    pc.addEventListener('connectionstatechange',()=>{
+      if(!this._go2rtcLive || this._go2rtcLive.pc!==pc) return;
+      if(pc.connectionState==='connected') {
+        const tx=pc.getTransceivers();
+        const tracks=tx.filter(tr=>tr.currentDirection==='recvonly').map(tr=>tr.receiver.track).filter(Boolean);
+        this._rtcDebug.tracks=tracks.map(t=>({kind:t.kind,id:t.id,readyState:t.readyState,muted:t.muted,enabled:t.enabled}));
+        const video2=document.createElement('video');
+        video2.autoplay=true; video2.playsInline=true; video2.muted=true; video2.preload='auto';
+        video2.addEventListener('loadeddata',()=>{
+          if(!this._go2rtcLive || this._go2rtcLive.pc!==pc) return;
+          const stream=video2.srcObject; if(!(stream instanceof MediaStream)) { this._rtcDbg('TEMP VIDEO has no MediaStream'); return; }
+          this._go2rtcLive.stream=stream; this._liveAudioAvailable=stream.getAudioTracks().length>0;
+          video.srcObject=stream;
+          video.muted=!this._liveAudioEnabled;
+          video.volume=1;
+          video.setAttribute('playsinline','');
+          video.play().catch(()=>{});
+          if (this._liveAudioEnabled) {
+            // If iOS replaced the media element during Talk startup, retry
+            // playback on the next media-ready tick without introducing a
+            // second audio control.
+            const resumeAudio = () => {
+              if (!this._go2rtcLive || this._go2rtcLive.pc!==pc) return;
+              try { video.muted=false; video.volume=1; const p=video.play(); if(p?.catch)p.catch(()=>{}); } catch (_) {}
+            };
+            video.addEventListener('canplay', resumeAudio, {once:true});
+            video.addEventListener('loadedmetadata', resumeAudio, {once:true});
+            setTimeout(resumeAudio, 250);
+          }
+          video2.srcObject=null; this._renderStreamCtrl();
+        },{once:true});
+        video2.srcObject=new MediaStream(tracks);
+        video2.play().catch(()=>{});
+      } else if(pc.connectionState==='failed' || pc.connectionState==='disconnected') {
+        pc.close();
+        this._setStatusOverlay('error','Live stream disconnected','Unable to maintain the go2rtc WebRTC connection.',{retry:true,retryHandler:()=>this._mountGo2RTCVideo(this._talkMic)});
+      }
+    });
+
+    let remoteDescriptionSet=false; const pendingCandidates=[];
+    let answerResolve,answerReject; const answerPromise=new Promise((resolve,reject)=>{answerResolve=resolve;answerReject=reject;});
+    ws.addEventListener('message',async ev=>{
+      if(typeof ev.data!=='string') return;
+      try { const msg=JSON.parse(ev.data);
+        if(msg.type==='webrtc/candidate') { if(!msg.value) {this._rtcDbg('remote ICE end'); return;} const candidate={candidate:msg.value,sdpMid:'0'}; this._rtcDebug.candidates.push({direction:'in',candidate}); if(remoteDescriptionSet){try{await pc.addIceCandidate(candidate);this._rtcDbg('remote ICE added');}catch(e){this._rtcDbg('remote ICE add FAILED',e);}} else pendingCandidates.push(candidate); }
+        else if(msg.type==='webrtc/answer') { this._rtcDebug.answer=this._rtcSdpSummary(msg.value); try{await pc.setRemoteDescription({type:'answer',sdp:msg.value}); this._rtcDbg('remote description set',{type:pc.remoteDescription?.type,transceivers:pc.getTransceivers().map((t,i)=>({i,mid:t.mid,direction:t.direction,currentDirection:t.currentDirection,kind:t.receiver.track?.kind,track:t.receiver.track?.id,senderKind:t.sender.track?.kind})),audio:this._rtcAudioDiagnostics(pc,microphoneStream)}); remoteDescriptionSet=true; while(pendingCandidates.length){const c=pendingCandidates.shift(); try{await pc.addIceCandidate(c);this._rtcDbg('queued ICE added');}catch(e){this._rtcDbg('queued ICE FAILED',e);}} answerResolve();}catch(e){this._rtcDebug.errors.push(this._rtcSafe(e));this._rtcDbg('setRemoteDescription FAILED',e);answerReject(e);} }
+        else if(msg.type==='error') {this._rtcDebug.errors.push({go2rtc:msg.value}); this._rtcDbg('GO2RTC ERROR',msg.value); answerReject(new Error(msg.value||'go2rtc signaling error'));}
+      } catch(e){ console.warn('[Frigate] go2rtc signaling message',e); }
+    });
+    ws.addEventListener('open',async()=>{try{this._rtcDbg('WS OPEN',{url:this._rtcRedactUrl(ws.url),authMode:signedWs.authMode,readyState:ws.readyState,readyStateName:'OPEN',elapsedMs:Math.round(performance.now()-((this._rtcDebug?.started||Date.now())))}); const offer=await pc.createOffer(); this._rtcDebug.offer=this._rtcSdpSummary(offer.sdp); this._rtcDbg('OFFER CREATED',{sdpSummary:this._rtcDebug.offer,transceivers:pc.getTransceivers().map((t,i)=>({i,mid:t.mid,direction:t.direction,currentDirection:t.currentDirection,senderKind:t.sender.track?.kind,receiverKind:t.receiver.track?.kind})),audio:this._rtcAudioDiagnostics(pc,microphoneStream)}); await pc.setLocalDescription(offer); this._rtcDbg('LOCAL DESCRIPTION SET',{signalingState:pc.signalingState,iceGatheringState:pc.iceGatheringState}); if(ws.readyState!==WebSocket.OPEN) throw new Error('go2rtc WebSocket closed before offer'); ws.send(JSON.stringify({type:'webrtc/offer',value:offer.sdp})); this._rtcDbg('OFFER SENT');}catch(e){this._rtcDebug.errors.push(this._rtcSafe(e)); this._rtcDbg('OFFER FAILED',e); answerReject(e);}}, {once:true});
+    ws.addEventListener('error',(e)=>{this._rtcDebug.errors.push(this._rtcSafe(e));this._rtcDbg('WS ERROR',{eventType:e?.type,readyState:ws.readyState,readyStateName:['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState]||'UNKNOWN',url:this._rtcRedactUrl(ws.url),authMode:signedWs.authMode});answerReject(new Error('Unable to connect to go2rtc'));},{once:true});
+    ws.addEventListener('close',(e)=>{this._rtcDbg('WS CLOSE',{code:e.code,reason:e.reason,wasClean:e.wasClean,readyState:ws.readyState,readyStateName:['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState]||'UNKNOWN',url:this._rtcRedactUrl(ws.url),authMode:signedWs.authMode});if(this._go2rtcLive?.pc===pc && pc.connectionState!=='connected') answerReject(new Error('go2rtc WebSocket closed during negotiation'));},{once:true});
+    try { await Promise.race([answerPromise,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Timed out waiting for go2rtc WebRTC answer')),10000))]); this._rtcDbg('NEGOTIATION ANSWER RECEIVED'); } catch(e) { this._rtcDebug.errors.push(this._rtcSafe(e)); this._rtcDbg('NEGOTIATION FAILED/TIMEOUT',e); throw e; }
+    this._wireLiveFsNudge(video);
+    this._renderStreamCtrl(); return video;
+    };
+    const mountPromise = runMount();
+    this._go2rtcMountPromise = mountPromise;
+    try { return await mountPromise; } finally { if (this._go2rtcMountPromise === mountPromise) this._go2rtcMountPromise = null; }
+  },
+
+_destroyGo2RTCLive(preserveVideo=false) {
+    const live=this._go2rtcLive;
+    this._go2rtcLive=null;
+    this._liveAudioAvailable=false;
+    if(live?.ws){try{live.ws.close();}catch(_){}}
+    if(live?.pc){try{live.pc.close();}catch(_){}}
+    // When replacing a receive-only peer with the microphone-enabled Talk
+    // peer, keep the same DOM media element.  Reusing it preserves the user's
+    // prior audio-unlock gesture instead of creating a fresh audible media
+    // element after getUserMedia() has yielded.
+    if(live?.video && !preserveVideo){try{live.video.pause();live.video.srcObject=null;}catch(_){}}
+    if(this._talkUsingLivePC){ this._talkPC=null; this._talkWS=null; this._talkUsingLivePC=false; }
+  }
+};
+
+// ── src/card/live/fullscreen.js ──
+/**
+ * iOS/WebKit fullscreen recovery and MediaStream compositor safeguards.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const liveFullscreenMethods = {
+_wireLiveFsNudge(engineEl, attempt=0) {
+    const vid=this._findVideo(engineEl);
+    if(!vid){
+      if(attempt<30) setTimeout(()=>{
+        if(this._engine===engineEl) this._wireLiveFsNudge(engineEl,attempt+1);
+      },100);
+      return;
+    }
+    this._watchAutoAspectMedia(vid);
+    if(vid._frigateLiveFsCleanup) return;
+
+    const wrap=this.shadowRoot?.querySelector('#eng-wrap');
+    if(!wrap) return;
+
+    vid.playsInline=true;
+    vid.setAttribute('playsinline','');
+    vid.setAttribute('webkit-playsinline','');
+    // Keep native AVPlayer fullscreen out of the live MediaStream path on iOS.
+    // The card no longer renders a dedicated iOS fullscreen button; this is a
+    // defensive guard for native player chrome / WebKit presentation changes.
+    try { vid.setAttribute('controlslist','nofullscreen'); } catch(_) {}
+
+    // iOS can pause a MediaStream-backed <video> as it is transferred to/from
+    // native AVPlayer fullscreen. Keep the exact same MediaStream/peer attached,
+    // but let AVPlayer own fullscreen while it is active. Critically, once native
+    // fullscreen ends we restore the ordinary card geometry immediately. The old
+    // Earlier behavior intentionally left a fixed pseudo-fullscreen shell
+    // behind, which is the oversized player users then had to dismiss with X.
+    let fsHandoffUntil=0;
+    let nativeFullscreenActive=false;
+    const resumeSameLiveVideo=()=>{
+      if(!vid.isConnected || !this.isConnected) return;
+      if(this._go2rtcLive?.video && this._go2rtcLive.video!==vid && engineEl===vid) return;
+      try {
+        vid.playsInline=true;
+        vid.setAttribute('playsinline','');
+        vid.setAttribute('webkit-playsinline','');
+        const p=vid.play();
+        if(p?.catch) p.catch(()=>{});
+      } catch(_) {}
+    };
+    const clearFullscreenShell=()=>{
+      // This is intentionally synchronous: layout must be back to the embedded
+      // card before WebKit paints the first post-fullscreen frame.
+      wrap.classList.remove('live-pseudo-fullscreen');
+      wrap.querySelector('.live-fs-exit')?.remove();
+      this._livePseudoFullscreen=false;
+    };
+    const beginNativeFullscreen=()=>{
+      if(!vid.isConnected) return;
+      nativeFullscreenActive=true;
+      fsHandoffUntil=performance.now()+1600;
+      // A stale visual shell from an earlier fallback must never sit underneath
+      // or survive a real native fullscreen presentation.
+      clearFullscreenShell();
+      this._removeLiveFsMirror();
+    };
+    const finishNativeFullscreen=(force=false)=>{
+      if(!force && !nativeFullscreenActive && !this._livePseudoFullscreen) return;
+      nativeFullscreenActive=false;
+      fsHandoffUntil=performance.now()+1600;
+      clearFullscreenShell();
+
+      // Recover the live compositor inside the NORMAL-SIZED card. A mirror made
+      // from the same receiver tracks can bridge the first post-fullscreen frame
+      // without keeping the wrapper fixed over the viewport.
+      resumeSameLiveVideo();
+      if(vid.srcObject) this._createLiveFsMirror(vid,wrap);
+      requestAnimationFrame(resumeSameLiveVideo);
+      setTimeout(resumeSameLiveVideo,80);
+      setTimeout(()=>this._recoverIOSLiveAfterFullscreen(),120);
+    };
+    const onBegin=()=>beginNativeFullscreen();
+    const onPresentation=()=>{
+      if(vid.webkitPresentationMode==='fullscreen') beginNativeFullscreen();
+      else if(nativeFullscreenActive || this._livePseudoFullscreen) finishNativeFullscreen(true);
+    };
+    // Some WKWebView builds can deliver end without a reliable begin/presentation
+    // sequence. Force the geometry cleanup on every native fullscreen end.
+    const onEnd=()=>finishNativeFullscreen(true);
+    const onPause=()=>{
+      // Resume only pauses produced by the native-fullscreen handoff. Once the
+      // transition has settled, the user's normal pause control must work.
+      if(nativeFullscreenActive && performance.now()<fsHandoffUntil) {
+        setTimeout(resumeSameLiveVideo,0);
+      }
+    };
+
+    vid.addEventListener('webkitbeginfullscreen',onBegin);
+    vid.addEventListener('webkitendfullscreen',onEnd);
+    vid.addEventListener('webkitpresentationmodechanged',onPresentation);
+    vid.addEventListener('pause',onPause);
+
+    const cleanup=()=>{
+      vid.removeEventListener('webkitbeginfullscreen',onBegin);
+      vid.removeEventListener('webkitendfullscreen',onEnd);
+      vid.removeEventListener('webkitpresentationmodechanged',onPresentation);
+      vid.removeEventListener('pause',onPause);
+      try { delete vid._frigateLiveFsCleanup; } catch(_) { vid._frigateLiveFsCleanup=null; }
+    };
+    vid._frigateLiveFsCleanup=cleanup;
+    if(this._liveFsCleanup && this._liveFsCleanup!==cleanup) {
+      try { this._liveFsCleanup(); } catch(_) {}
+    }
+    this._liveFsCleanup=cleanup;
+  },
+
+_createLiveFsMirror(source,wrap){
+    if(!source?.srcObject||!wrap) return null;
+    this._removeLiveFsMirror();
+    const mirror=document.createElement('video');
+    mirror.className='live-fs-mirror';
+    mirror.autoplay=true; mirror.playsInline=true; mirror.muted=true; mirror.controls=false;
+    mirror.setAttribute('playsinline',''); mirror.setAttribute('webkit-playsinline','');
+    // Use a fresh MediaStream wrapper around the same receiver tracks. This
+    // keeps one RTCPeerConnection/audio path, but forces WebKit to create a new
+    // video rendering attachment instead of reusing the compositor that native
+    // fullscreen may have frozen.
+    try {
+      mirror.srcObject = source.srcObject instanceof MediaStream
+        ? new MediaStream(source.srcObject.getTracks())
+        : source.srcObject;
+    } catch(_) { mirror.srcObject=source.srcObject; }
+    wrap.appendChild(mirror);
+    this._liveFsMirror=mirror;
+    const play=()=>{ try { const p=mirror.play(); if(p?.catch)p.catch(()=>{}); } catch(_) {} };
+    requestAnimationFrame(play); setTimeout(play,80);
+    return mirror;
+  },
+
+_removeLiveFsMirror(){
+    const m=this._liveFsMirror;
+    this._liveFsMirror=null;
+    if(m){ try { m.pause(); m.srcObject=null; } catch(_) {} try { m.remove(); } catch(_) {} }
+  },
+
+_recoverIOSLiveAfterFullscreen(){
+    if(!this._isIOSRecordingPlatform() || !this.isConnected) { this._removeLiveFsMirror(); return; }
+    const seq=++this._liveFsRecoverySeq;
+    const source=this._go2rtcLive?.video || this._findVideo(this._engine);
+    if(!source) {
+      this._removeLiveFsMirror();
+      if(!this._playing) requestAnimationFrame(()=>{ if(seq===this._liveFsRecoverySeq && this.isConnected) this._mountEngine(); });
+      return;
+    }
+    try {
+      source.playsInline=true;
+      source.setAttribute('playsinline','');
+      source.setAttribute('webkit-playsinline','');
+      source.setAttribute('controlslist','nofullscreen');
+      const p=source.play?.(); if(p?.catch)p.catch(()=>{});
+    } catch(_) {}
+
+    // Keep the mirror on top while the original element proves that WebKit is
+    // producing frames again. requestVideoFrameCallback detects the exact
+    // compositor recovery rather than trusting readyState/videoWidth, which can
+    // remain healthy even when iOS has frozen the visual surface.
+    let recovered=false;
+    const finish=()=>{
+      if(recovered || seq!==this._liveFsRecoverySeq) return;
+      recovered=true;
+      clearTimeout(timer);
+      this._removeLiveFsMirror();
+    };
+    try {
+      if(typeof source.requestVideoFrameCallback==='function') {
+        source.requestVideoFrameCallback(()=>finish());
+      }
+    } catch(_) {}
+    const startTime=Number(source.currentTime);
+    const timer=setTimeout(()=>{
+      if(recovered || seq!==this._liveFsRecoverySeq || !this.isConnected) return;
+      const moved=Number.isFinite(startTime) && Number.isFinite(Number(source.currentTime)) && Number(source.currentTime)>startTime+.03;
+      if(moved) { finish(); return; }
+      // Last-resort repair: rebuild only the live engine. This is intentionally
+      // delayed until the old video failed to produce a frame, avoiding needless
+      // WebRTC renegotiation on healthy exits while guaranteeing that a frozen
+      // iOS compositor does not remain on screen.
+      this._removeLiveFsMirror();
+      if(this._playing) return;
+      this._unmountEngine();
+      requestAnimationFrame(()=>{ if(this.isConnected && !this._playing) this._mountEngine(); });
+    },650);
+  },
+
+_exitLivePseudoFullscreen(wrap){
+    if(!wrap) return;
+    wrap.classList.remove('live-pseudo-fullscreen');
+    wrap.querySelector('.live-fs-exit')?.remove();
+    this._livePseudoFullscreen=false;
+    // Do not immediately destroy the bridge video. It covers the WebKit
+    // compositor hand-back until the original live element produces a frame.
+    this._recoverIOSLiveAfterFullscreen();
+  },
+
+_addLiveFsExit(wrap){
+    if(!wrap || wrap.querySelector('.live-fs-exit')) return;
+    const b=document.createElement('button');
+    b.className='live-fs-exit'; b.type='button'; b.title='Exit fullscreen'; b.setAttribute('aria-label','Exit fullscreen'); b.textContent='×';
+    b.addEventListener('click',e=>{
+      e.stopPropagation();
+      this._exitLivePseudoFullscreen(wrap);
+    });
+    wrap.appendChild(b);
+  }
+};
+
+// ── src/card/live/view.js ──
+/**
+ * Live-view UI, camera switching, grid mode, status overlays, and rotation.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const liveViewMethods = {
+async _mountGrid() {
+    const grid = this.shadowRoot.querySelector('#cam-grid'); if (!grid) return;
+    const n = this._config.cameras.length;
+    const slots = n === 3 ? 4 : n;   // 3 cams → 4 slots, last is placeholder
+    grid.className = `cam-grid cams-${n}`;
+    grid.innerHTML = '';
+    for (let i = 0; i < slots; i++) {
+      const slot = document.createElement('div');
+      const isPlaceholder = i >= n;
+      slot.className = `grid-slot${isPlaceholder ? ' placeholder' : ''}`;
+      if (!isPlaceholder) {
+        const c = this._config.cameras[i];
+        const name = cap(camDisplayName(c));
+        // stream
+        const stateObj = this._streamStateObj(c.entity);
+        if (stateObj) {
+          const s = document.createElement('ha-camera-stream');
+          s.hass = this._hass; s.stateObj = stateObj; s.controls = false; s.muted = true;
+          s.style.cssText = 'width:100%;height:100%;display:block;pointer-events:none';
+          slot.appendChild(s);
+        }
+        // label
+        const lbl = document.createElement('div');
+        lbl.className = 'grid-label'; lbl.textContent = name;
+        slot.appendChild(lbl);
+        // click → set as active cam for the events list; stay in grid
+        // guard: buttons inside the slot handle their own action; don't also switch camera
+        slot.addEventListener('click', ev => {
+          if (ev.target.closest('.grid-fs-btn,.grid-close-btn,[data-restore-slot]')) return;
+          this._switchCamera(i); this._renderCamSwitcher();
+        });
+        // Per-slot fullscreen is desktop-only. On iOS keep custom fullscreen
+        // affordances out of view to avoid handing live MediaStreams to AVPlayer.
+        if(!this._isIOSRecordingPlatform()) {
+          const fsBtn = document.createElement('button');
+          fsBtn.className = 'grid-fs-btn'; fsBtn.title = 'Fullscreen';
+          fsBtn.innerHTML = ICONS.expand;
+          fsBtn.addEventListener('click', ev => { ev.stopPropagation(); this._fullscreen(slot); });
+          slot.appendChild(fsBtn);
+        }
+      }
+      grid.appendChild(slot);
+    }
+  },
+
+_canPlayRecordedMedia(event) {
+    // Frigate events are stored independently of the camera's current live
+    // availability. A camera/doorbell being offline must never prevent an
+    // already-recorded event from opening.
+    if (!event) return false;
+    return !!(
+      event.id ||
+      event.event_id ||
+      event.start_time != null ||
+      event.timestamp != null ||
+      event.thumbnail ||
+      event.thumb
+    );
+  },
+
+_ensureStatusOverlay() {
+    const viewer=this.shadowRoot?.querySelector?.('#viewer');
+    if(!viewer) return null;
+    let overlay=viewer.querySelector('.status-overlay');
+    if(!overlay) {
+      overlay=document.createElement('div');
+      overlay.className='status-overlay hidden';
+      overlay.innerHTML=`
+        <div class="status-card">
+          <div class="status-spinner" hidden></div>
+          <div class="status-icon" hidden></div>
+          <div class="status-title"></div>
+          <div class="status-detail"></div>
+          <button class="status-retry" hidden type="button">Try again</button>
+        </div>`;
+      viewer.appendChild(overlay);
+      overlay.querySelector('.status-retry').addEventListener('click',e=>{
+        e.preventDefault(); e.stopPropagation();
+        this._retryStatusOverlay?.();
+      });
+    }
+    return overlay;
+  },
+
+_setStatusOverlay(kind, title, detail='', opts={}) {
+    const overlay=this._ensureStatusOverlay();
+    if(!overlay) return;
+    const spinner=overlay.querySelector('.status-spinner');
+    const icon=overlay.querySelector('.status-icon');
+    const titleEl=overlay.querySelector('.status-title');
+    const detailEl=overlay.querySelector('.status-detail');
+    const retry=overlay.querySelector('.status-retry');
+    const loading=kind==='loading' || kind==='connecting';
+    const icons={offline:'⌁',error:'!',recording:'▶',info:'i',live:'•'};
+    spinner.hidden=!loading;
+    icon.hidden=loading;
+    icon.textContent=icons[kind] || 'i';
+    titleEl.textContent=title || '';
+    detailEl.textContent=detail || '';
+    retry.hidden=!opts.retry;
+    overlay.classList.toggle('hidden',!title);
+    this._statusOverlayKind=kind;
+    this._statusOverlayRetry=opts.retry ? (opts.retryHandler || null) : null;
+    this._retryStatusOverlay=()=>{
+      if(typeof this._statusOverlayRetry==='function') this._statusOverlayRetry();
+      else if(typeof this._startLive==='function') this._startLive();
+    };
+  },
+
+_clearStatusOverlay() {
+    const overlay=this.shadowRoot?.querySelector?.('.status-overlay');
+    if(overlay) overlay.classList.add('hidden');
+    this._statusOverlayKind=null;
+    this._statusOverlayRetry=null;
+  },
+
+_cameraIsOffline() {
+    const s=this._cameraState || this._activeCam?.state || this._hass?.states?.[this._cameraEntity]?.state;
+    return s === 'unavailable' || s === 'unknown' || s === 'offline';
+  },
+
+_toggleLiveAudio() {
+    const video = this._go2rtcLive?.video || this._findVideo?.(this._engine);
+    if (!video) return;
+
+    this._liveAudioEnabled = !this._liveAudioEnabled;
+    try {
+      video.muted = !this._liveAudioEnabled;
+      video.volume = 1;
+      if (this._liveAudioEnabled) {
+        video.setAttribute?.('playsinline', '');
+        video.play?.()?.catch?.(() => {});
+      }
+    } catch (_) {}
+
+    this._renderStreamCtrl();
+  },
+
+_renderStreamCtrl() {
+    if (this._cameraIsOffline() && !this._playing) {
+      this._setStatusOverlay('offline','Camera is offline','Live video is unavailable right now. Your recorded events can still be viewed.',{retry:true});
+    }
+
+    const bar = this.shadowRoot.querySelector('#stream-ctrl-bar'); if (!bar) return;
+    const inGrid = this._viewMode === 'grid';
+    const speaking = !!this._talkSpeaking;
+    const connected = !!this._talkConnected;
+    const talkLbl = (speaking || connected) ? 'End two-way audio' : 'Start two-way audio';
+    const isLive = !this._playing && this.shadowRoot.querySelector('#viewer')?.style.display !== 'flex';
+    const liveVideo = this._go2rtcLive?.video || null;
+    const liveHasAudio = Boolean(
+      this._liveAudioAvailable || this._go2rtcLive?.stream?.getAudioTracks?.().length
+    );
+    const audioLabel = this._liveAudioEnabled ? 'Mute live audio' : 'Unmute live audio';
+    const audioBtn = (isLive && !inGrid && liveVideo && liveHasAudio)
+      ? `<button class="scb-btn audio-btn${this._liveAudioEnabled ? ' active' : ''}" id="sc-audio" title="${audioLabel}" aria-label="${audioLabel}" aria-pressed="${Boolean(this._liveAudioEnabled)}">${this._liveAudioEnabled ? ICONS.volOn : ICONS.volOff}</button>`
+      : '';
+    const talkAvailable = !!(
+      this._config.two_way_audio &&
+      this._microphonePresent === true &&
+      !this._micForbidden &&
+      (this._talkStreamName() || this._config.frigate_client_id || this._activeCam?.entity)
+    );
+    const talkBtn = (isLive && !inGrid && talkAvailable)
+      ? `<button class="scb-btn talk-btn${speaking ? ' talking' : ''}${connected ? ' connected' : ''}" id="sc-talk" title="${talkLbl}" aria-label="${talkLbl}" aria-pressed="${speaking}" aria-busy="${connected && !speaking}">
+           <canvas class="talk-wave" id="talk-wave" width="72" height="72" aria-hidden="true"></canvas>
+           <span class="talk-mic-glyph" aria-hidden="true">${ICONS.mic}</span>
+         </button>`
+      : '';
+    // Do not render any dedicated fullscreen control on iOS. Native WebKit
+    // fullscreen can destabilize MediaStream-backed live video, and the custom
+    // pseudo-fullscreen button was redundant with the platform's own viewing
+    // affordances. Desktop keeps the whole-grid control where it is useful.
+    const fsBtn = (inGrid && !this._isIOSRecordingPlatform())
+      ? `<button class="scb-btn" id="sc-fs" title="Fullscreen" aria-label="Fullscreen">${ICONS.expand}</button>`
+      : '';
+    // Live is represented internally by an empty gallery mode because the
+    // timeline is the live view. Explicitly derive the active state from _tab
+    // so Live is highlighted on first render and after every return to Live.
+    const activeMediaTab = this._galleryMode || (this._tab === 'live' ? 'live' : '');
+    const hiddenTabs=new Set(this._config.hidden_tabs||[]);
+    const mediaBtn = (id, label, icon) => (id!=='live' && hiddenTabs.has(id)) ? '' : `<button class="media-nav-btn${activeMediaTab===id?' active':''}" data-gallery-tab="${id}" title="${label}" aria-label="${label}">${icon}<span>${label}</span></button>`;
+    const liveBtn = mediaBtn('live','Live',ICONS.live);
+    const clipsBtn = mediaBtn('clips','Clips',ICONS.clips);
+    const recordingsBtn = mediaBtn('recordings','Recordings',ICONS.recordings);
+    const reviewsBtn = mediaBtn('reviews','Reviews',ICONS.reviews);
+    const recDl = (this._playing && this._playing.rec)
+      ? `<button class="scb-btn rec-download-icon${this._downloadRange?' range-active':''}" data-rec-download title="${this._downloadRange?'Adjust download range':'Choose download range'}" aria-label="${this._downloadRange?'Adjust download range':'Choose download range'}" aria-pressed="${this._downloadRange?'true':'false'}">${ICONS.download}</button>`
+      : '';
+    const mediaGroup = `<div class="media-nav-group" role="group" aria-label="Media navigation">${liveBtn}${clipsBtn}${recordingsBtn}${reviewsBtn}</div>`;
+    bar.innerHTML = `${audioBtn}${talkBtn}${fsBtn}${mediaGroup}${recDl}`;
+    bar.querySelector('#sc-audio')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this._toggleLiveAudio();
+    });
+    this._wireTalkButton();
+    if (this._talkSpeaking && this._talkMic) this._startTalkWaveform();
+  },
+
+_setViewMode(mode) {
+    if (mode === 'grid') this._stopTalk(); // no talk button/target in grid view
+    this._viewMode = mode;
+    const card = this.shadowRoot.querySelector('.card');
+    if (card) card.classList.toggle('grid-mode', mode === 'grid');
+    const engWrap = this.shadowRoot.querySelector('#eng-wrap');
+    const gridEl = this.shadowRoot.querySelector('#cam-grid');
+
+    if (mode === 'grid') {
+      if (engWrap) engWrap.style.display = 'none';
+      if (gridEl) { gridEl.style.display = ''; this._mountGrid(); }
+      this._eventsMode = 'all';
+      const lbl = this.shadowRoot.querySelector('#list-label');
+      if (lbl) lbl.textContent = 'All cameras';
+      this._loadAllCamsBackground().then(() => this._renderAll());
+      this._renderStreamCtrl(); // hide mute button in grid mode
+    } else {
+      if (engWrap) engWrap.style.display = '';
+      if (gridEl) gridEl.style.display = 'none';
+      this._eventsMode = 'camera';
+      // A camera selector is meaningless in single-camera browsing. Clear any
+      // selection carried over from Multiview before rendering the gallery.
+      if(this._mediaFilter) this._mediaFilter.camera='all';
+      this._mountEngine();
+      this._renderAll();
+    }
+    this._renderCamSwitcher();
+    this._applyBrowse();
+    this.shadowRoot.querySelectorAll('[data-viewmode]').forEach(p =>
+      p.classList.toggle('active', p.dataset.viewmode === mode));
+  },
+
+async _switchCamera(idx) {
+    if (idx === this._activeCamIdx && this._viewMode === 'single') return;
+    this._downloadRange=null;
+    this._stopTalk(); // talk session is bound to the previous camera's go2rtc stream
+    // Clicking a cam tab while in grid mode switches to single view of that camera
+    if (this._viewMode === 'grid') this._setViewMode('single');
+    const prevEnt = this._activeCam?.entity;
+    if (prevEnt && this._camCache[prevEnt]) {
+      this._camCache[prevEnt].events = this._events;
+      this._camCache[prevEnt].recordings = this._recordings;
+      this._camCache[prevEnt].recordingsLoaded = this._recordingsLoaded;
+      this._camCache[prevEnt].recordingsRangeStart = this._recordingsRangeStart;
+      this._camCache[prevEnt].recordingsRangeEnd = this._recordingsRangeEnd;
+      this._camCache[prevEnt].recordingsLoadedAt = this._recordingsLoadedAt;
+    }
+    this._activeCamIdx = idx;
+    const newEnt = this._activeCam?.entity;
+    if (!this._camCache[newEnt]) this._camCache[newEnt] = mkCamState();
+    if (!this._camCache[newEnt].discovered) await this._discoverOne(newEnt);
+    this._applyCardStyle();
+    this._loadFrigateFilterMetadata();
+    const cached = this._camCache[newEnt];
+    this._events = cached.events||[]; this._recordings = cached.recordings||[]; this._recordingsLoaded = cached.recordingsLoaded===true; this._recordingsRangeStart = Number.isFinite(Number(cached.recordingsRangeStart)) ? Number(cached.recordingsRangeStart) : null; this._recordingsRangeEnd = Number.isFinite(Number(cached.recordingsRangeEnd)) ? Number(cached.recordingsRangeEnd) : null; this._recordingsLoadedAt = Number(cached.recordingsLoadedAt)||0;
+    this._reviews = cached.reviews||[]; this._kept = cached.kept||[];
+    this._renderCamSwitcher(); this._syncStatus();
+    await this._mountEngine();
+    this._renderAll();
+    await this._loadWindow(true);
+  },
+
+_startRotate() {
+    this._stopRotate();
+    const secs = this._config.rotate_seconds || DEFAULT_ROTATE_S;
+    this._rotateTimer = setInterval(() => {
+      const next = (this._activeCamIdx+1) % this._config.cameras.length;
+      this._switchCamera(next);
+    }, secs*1000);
+  },
+
+_stopRotate() { if (this._rotateTimer) { clearInterval(this._rotateTimer); this._rotateTimer=null; } },
+
+_toggleRotate() {
+    if (this._rotateTimer) { this._stopRotate(); this._toast('Auto-rotate off',1800); }
+    else {
+      if (!this._config.rotate_seconds) this._config.rotate_seconds = DEFAULT_ROTATE_S;
+      this._startRotate(); this._toast(`Rotating every ${this._config.rotate_seconds}s`,1800);
+    }
+    this._renderCamSwitcher();
+  }
+};
+
+// ── src/card/live.js ──
+/**
+ * Public method-group barrel for liveMethods.
+ *
+ * Keeping this entry point stable avoids coupling callers to the internal
+ * feature layout while allowing each concern to live in a focused module.
+ */
+const liveMethods = Object.assign(
+  {},
+  liveDiscoveryMethods,
+  liveEngineMethods,
+  liveWebRtcMethods,
+  liveFullscreenMethods,
+  liveViewMethods,
+);
+
+// ── src/card/talk/controls.js ──
+/**
+ * Two-way-audio controls, user gestures, and microphone waveform UI.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const talkControlMethods = {
+_talkStreamName() {
+    const cam = this._activeCam; if (!cam) return null;
+    return cam.go2rtc_stream || this._cc().cam || (cam.entity ? String(cam.entity).split('.').pop() : null) || null;
+  },
+
+async _toggleTalk() {
+    if (this._viewMode === 'grid' || this._playing) return;
+    // A pointerdown on iOS may already have started Talk so that getUserMedia
+    // runs inside the browser's user-activation window. The following click
+    // is only the synthetic follow-up to that same gesture. Consume it rather
+    // than toggling Talk off immediately.
+    if (this._talkGestureStarted) {
+      this._talkGestureStarted = false;
+      return;
+    }
+    if (this._talkState === 'connecting') return;
+    if (this._talkSpeaking) { await this._stopTalk(); return; }
+    this._talkSpeaking=true; this._talkState='connecting'; this._micDesiredMute=false;
+    this._wireTalkButton();
+    this._startTalk().catch(err=>{
+      console.warn('[Frigate] talk start failed',err);
+      this._talkSpeaking=false; this._talkConnected=false; this._talkState='error';
+      this._wireTalkButton(); this._renderStreamCtrl();
+    });
+  },
+
+_endTalk() {
+    this._talkSpeaking=false; this._talkState='idle'; this._micDesiredMute=true;
+    this._stopTalkWaveform();
+    this._setMicMuted(true);
+    this._startMicDisconnectTimer();
+    this._talkConnected=false;
+    this._wireTalkButton(); this._renderStreamCtrl();
+  },
+
+_wireTalkButton() {
+    const btn = this.shadowRoot.querySelector('#sc-talk');
+    if (!btn) return;
+    // iOS Safari/WebKit is stricter about getUserMedia user activation than
+    // desktop browsers. Start microphone acquisition directly from the
+    // pointer gesture, then let the delegated click handler consume the
+    // resulting activation instead of starting a second request. This keeps
+    // Talk one-tap on iOS without bringing back the separate audio button.
+    if (!btn.__frigateTalkPointerBound) {
+      btn.__frigateTalkPointerBound = true;
+      btn.addEventListener('pointerdown', () => {
+        if (this._talkSpeaking || this._talkState === 'connecting') return;
+        this._talkGestureStarted = true;
+        // iOS/WebKit grants media playback privileges to work started directly
+        // inside the user gesture.  Do this BEFORE getUserMedia() yields, so
+        // starting the microphone cannot consume the only activation token.
+        this._unlockLiveAudioFromGesture();
+        this._toggleTalk();
+      }, {passive:true});
+    }
+    const active = !!this._talkSpeaking;
+    const connecting = this._talkState === 'connecting';
+    btn.classList.toggle('talking', active);
+    btn.classList.toggle('connected', !!this._talkConnected);
+    btn.classList.toggle('talk-connecting', connecting);
+    btn.setAttribute('aria-pressed', String(active));
+    btn.setAttribute('aria-busy', String(connecting));
+    btn.setAttribute('aria-label', connecting ? 'Connecting…' : (active ? 'End two-way audio' : 'Start two-way audio'));
+    btn.title = connecting ? 'Connecting…' : (active ? 'End two-way audio' : 'Start two-way audio');
+  },
+
+_unlockLiveAudioFromGesture() {
+    this._liveAudioEnabled = true;
+    const video = this._go2rtcLive?.video || this.shadowRoot?.querySelector('#engine video');
+    if (!video) return;
+    try {
+      video.muted = false;
+      video.volume = 1;
+      video.setAttribute('playsinline', '');
+      const p = video.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (_) {}
+  },
+
+_updateTalkButtonVisual() {
+    const btn = this.shadowRoot.querySelector('#sc-talk');
+    if (!btn) return;
+    const speaking = !!this._talkSpeaking;
+    const connected = !!this._talkConnected;
+    btn.classList.toggle('talking', speaking);
+    btn.classList.toggle('connected', connected);
+    btn.setAttribute('aria-pressed', String(speaking));
+    btn.setAttribute('aria-busy', String(connected && !speaking));
+    btn.title = speaking ? 'Release to stop talking' : 'Hold to talk';
+    btn.setAttribute('aria-label', btn.title);
+  },
+
+_pressTalk() {
+    return this._toggleTalk();
+  },
+
+_releaseTalk() {
+    // Tap-to-toggle: pointer release must not stop talkback.
+  },
+
+_startTalkWaveform() {
+    const canvas = this.shadowRoot.querySelector('#talk-wave');
+    if (!canvas || !this._talkMic || !this._talkSpeaking) return;
+    if (this._talkWaveRAF) return;
+
+    const track = this._talkMic.getAudioTracks?.()[0];
+    if (!track) return;
+
+    try {
+      if (!this._talkAudioCtx || this._talkAudioCtx.state === 'closed') {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        this._talkAudioCtx = new Ctx();
+      }
+      const ctx = this._talkAudioCtx;
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      if (!this._talkAnalyser) {
+        this._talkAnalyser = ctx.createAnalyser();
+        this._talkAnalyser.fftSize = 128;
+        this._talkAnalyser.smoothingTimeConstant = 0.72;
+        this._talkAudioSource = ctx.createMediaStreamSource(this._talkMic);
+        this._talkAudioSource.connect(this._talkAnalyser);
+      }
+      const analyser = this._talkAnalyser;
+      const data = new Uint8Array(analyser.fftSize);
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const cssW = 72, cssH = 72;
+      canvas.width = cssW * dpr; canvas.height = cssH * dpr;
+      canvas.style.width = cssW + 'px'; canvas.style.height = cssH + 'px';
+      const c = canvas.getContext('2d');
+      c.setTransform(dpr,0,0,dpr,0,0);
+
+      const draw = () => {
+        this._talkWaveRAF = requestAnimationFrame(draw);
+        if (!this._talkSpeaking || !this.shadowRoot.contains(canvas)) {
+          this._talkWaveRAF = null; return;
+        }
+        analyser.getByteTimeDomainData(data);
+        let rms=0;
+        for (let i=0;i<data.length;i++) {
+          const x=(data[i]-128)/128; rms += x*x;
+        }
+        rms=Math.sqrt(rms/data.length);
+        const energy=Math.min(1, Math.max(.08, rms*4.2));
+
+        c.clearRect(0,0,cssW,cssH);
+        const cx=cssW/2, cy=cssH/2;
+        // iOS 9 Siri-inspired, layered flowing waveform: restrained when quiet,
+        // wider/brighter as the microphone receives speech.
+        const waves=[
+          {a:8+18*energy, f:1.7, phase:.0, alpha:.52},
+          {a:5+14*energy, f:2.25, phase:1.3, alpha:.78},
+          {a:4+11*energy, f:2.9, phase:2.1, alpha:.92},
+        ];
+        waves.forEach((w,wi)=>{
+          c.beginPath();
+          for(let x=0;x<=cssW;x+=2){
+            const nx=(x-cx)/cx;
+            const envelope=Math.max(0,1-Math.abs(nx))*0.95;
+            const y=cy + Math.sin(nx*Math.PI*w.f + w.phase + performance.now()/420*(wi+1)) * w.a * envelope;
+            if(x===0)c.moveTo(x,y); else c.lineTo(x,y);
+          }
+          c.lineWidth=wi===1?2.1:1.5;
+          c.globalAlpha=w.alpha*energy;
+          c.strokeStyle=wi===0?'#5e9cff':(wi===1?'#b66cff':'#ff6b8a');
+          c.stroke();
+        });
+        c.globalAlpha=1;
+        c.beginPath(); c.moveTo(7,cy); c.lineTo(cssW-7,cy);
+        c.lineWidth=1; c.strokeStyle='rgba(255,255,255,.18)'; c.stroke();
+      };
+      draw();
+    } catch (e) {
+      console.warn('[Frigate] waveform init failed', e);
+    }
+  },
+
+_stopTalkWaveform() {
+    if (this._talkWaveRAF) cancelAnimationFrame(this._talkWaveRAF);
+    this._talkWaveRAF = null;
+    if (this._talkAudioSource) { try { this._talkAudioSource.disconnect(); } catch (_) {} this._talkAudioSource=null; }
+    this._talkAnalyser = null;
+    if (this._talkAudioCtx && this._talkAudioCtx.state !== 'closed') {
+      this._talkAudioCtx.close().catch(() => {});
+    }
+    this._talkAudioCtx = null;
+  }
+};
+
+// ── src/card/talk/microphone.js ──
+/**
+ * Browser microphone capability, permission, mute, and disconnect lifecycle.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const microphoneMethods = {
+_frigateProxyWsUrl(stream) {
+    // The Frigate HA integration owns the authentication boundary. Its
+    // WebRTCProxyView exposes Frigate's /live/webrtc/api/ws endpoint through
+    // Home Assistant, so Safari never has to reach Frigate:5000/8971 or
+    // go2rtc:1984 directly. This is the same network boundary used by the
+    // Frigate integration's live WebRTC path.
+    if (!stream) return null;
+    const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const clientId = this._activeCam?.frigate_client_id || this._cc()?.clientId || this._config.frigate_client_id || 'frigate';
+    const prefix = `/api/frigate/${encodeURIComponent(String(clientId))}/go2rtc/ws/api/ws`;
+    return `${scheme}//${location.host}${prefix}?src=${encodeURIComponent(stream)}`;
+  },
+
+async _refreshMicrophoneAvailability() {
+    const media = navigator.mediaDevices;
+    const supported = Boolean(this._config?.two_way_audio && media?.getUserMedia);
+    let present = supported;
+
+    // enumerateDevices() can intentionally return an empty list before the
+    // user grants microphone permission. Treat getUserMedia() support as
+    // "potentially available" and let the permission request be authoritative.
+    if (supported && media?.enumerateDevices) {
+      try {
+        const devices = await media.enumerateDevices();
+        if (devices?.some?.((device) => device?.kind === 'audioinput')) present = true;
+      } catch (_) {
+        // Browser privacy restrictions must not hide the Talk control before
+        // the user has a chance to grant access.
+        present = true;
+      }
+    }
+
+    const changed = this._microphonePresent !== present;
+    this._microphonePresent = present;
+
+    if (!present && this._talkSpeaking) {
+      try { await this._stopTalk(); } catch (_) {}
+    }
+    if (changed && this.isConnected) this._renderStreamCtrl();
+    return present;
+  },
+
+_setupMicrophoneDetection() {
+    if(!this._config?.two_way_audio) {
+      this._microphonePresent=false;
+      if(this._micDeviceChangeHandler && navigator.mediaDevices?.removeEventListener) {
+        try { navigator.mediaDevices.removeEventListener('devicechange',this._micDeviceChangeHandler); } catch (_) {}
+      }
+      this._micDeviceChangeHandler=null;
+      if(this.isConnected) this._renderStreamCtrl();
+      return;
+    }
+    this._refreshMicrophoneAvailability();
+    if(!this._micDeviceChangeHandler && navigator.mediaDevices?.addEventListener) {
+      this._micDeviceChangeHandler=()=>this._refreshMicrophoneAvailability();
+      try { navigator.mediaDevices.addEventListener('devicechange',this._micDeviceChangeHandler); } catch (_) {}
+    }
+  },
+
+_micSupported() { return !!navigator.mediaDevices?.getUserMedia; },
+
+_setMicMuted(muted) {
+    this._micDesiredMute=!!muted;
+    this._talkMic?.getTracks().forEach(t=>t.enabled=!this._micDesiredMute);
+  },
+
+_startMicDisconnectTimer() {
+    if(this._config.two_way_audio_disconnect_seconds===0) return;
+    if(this._micDisconnectTimer) clearTimeout(this._micDisconnectTimer);
+    const sec=this._config.two_way_audio_disconnect_seconds;
+    if(sec>0) this._micDisconnectTimer=setTimeout(()=>this._disconnectMic(),sec*1000);
+  },
+
+_disconnectMic() {
+    if(this._micDisconnectTimer) clearTimeout(this._micDisconnectTimer); this._micDisconnectTimer=null;
+    if(this._talkMic){try{this._talkMic.getTracks().forEach(t=>t.stop());}catch(_){} this._talkMic=null;}
+    if(this._go2rtcLive && !this._playing && this._viewMode !== 'grid') {
+      this._mountGo2RTCVideo(null).catch(e=>console.warn('[Frigate] go2rtc microphone disconnect reconnect failed',e));
+    }
+  }
+};
+
+// ── src/card/talk/session.js ──
+/**
+ * go2rtc/WebRTC talk session connection, readiness, and teardown.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const talkSessionMethods = {
+async _startTalk() {
+    if(!this._micSupported()) throw new Error('Microphone is not supported');
+    if(!this._talkStreamName() || !this._go2rtcEndpoint()) throw new Error('No go2rtc stream is configured');
+    const micPromise = navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    this._talkMicReadyPromise = micPromise;
+    let mic;
+    try {
+      mic = await micPromise;
+      this._microphonePresent = !!mic?.getAudioTracks?.().length;
+      this._micForbidden = false;
+    } catch (err) {
+      const name=String(err?.name||'');
+      if(name==='NotFoundError' || name==='DevicesNotFoundError') this._microphonePresent=false;
+      if(name==='NotAllowedError' || name==='PermissionDeniedError' || name==='SecurityError') this._micForbidden=true;
+      this._renderStreamCtrl();
+      throw err;
+    } finally {
+      if (this._talkMicReadyPromise === micPromise) this._talkMicReadyPromise = null;
+    }
+    // Starting Talk must not call _disconnectMic(): that method intentionally
+    // tears down the microphone and starts a receive-only remount for ending
+    // Talk. Calling it here creates a second asynchronous WebRTC negotiation
+    // and can race the microphone-enabled negotiation on iOS.
+    if(this._micDisconnectTimer) {
+      clearTimeout(this._micDisconnectTimer);
+      this._micDisconnectTimer=null;
+    }
+    if(this._talkMic) {
+      try { this._talkMic.getTracks().forEach(t=>t.stop()); } catch (_) {}
+    }
+    this._talkMic=mic;
+    this._setMicMuted(false);
+
+    // The pointer gesture already unlocked the live video's audio before
+    // getUserMedia() yielded. Re-apply the desired state after the Talk peer
+    // is mounted in case the video element was replaced during remount.
+    this._unlockLiveAudioFromGesture();
+
+    // ACC reconnects the go2rtc VideoRTC session so microphone tracks are
+    // present before createOffer(). We do the same instead of renegotiating an
+    // already-established peer connection.
+    await this._mountGo2RTCVideo(mic);
+    this._talkPC=this._go2rtcLive?.pc||null; this._talkWS=this._go2rtcLive?.ws||null; this._talkUsingLivePC=true;
+    this._talkConnected=true; this._talkState='connected';
+    this._renderStreamCtrl(); this._startTalkWaveform();
+  },
+
+async _waitForPeerUsable(pc, timeout=7000) {
+    if (!pc) return;
+    const usable=()=>pc.connectionState==='connected' || pc.iceConnectionState==='connected' || pc.iceConnectionState==='completed';
+    if (usable()) return;
+    await new Promise((resolve,reject)=>{
+      const t=setTimeout(()=>resolve(),timeout);
+      const fn=()=>{
+        if(usable()){
+          clearTimeout(t);
+          pc.removeEventListener('connectionstatechange',fn);
+          pc.removeEventListener('iceconnectionstatechange',fn);
+          resolve();
+        } else if(pc.connectionState==='failed' || pc.iceConnectionState==='failed'){
+          clearTimeout(t);
+          pc.removeEventListener('connectionstatechange',fn);
+          pc.removeEventListener('iceconnectionstatechange',fn);
+          reject(new Error('WebRTC connection failed'));
+        }
+      };
+      pc.addEventListener('connectionstatechange',fn);
+      pc.addEventListener('iceconnectionstatechange',fn);
+    });
+  },
+
+async _stopTalk() {
+    if(this._micDisconnectTimer) clearTimeout(this._micDisconnectTimer); this._micDisconnectTimer=null;
+    this._stopTalkWaveform();
+    this._talkSpeaking=false; this._talkConnected=false; this._talkState='idle';
+    this._talkMicReadyPromise=null;
+
+    // Do not call _disconnectMic() here: that method intentionally remounts
+    // the live WebRTC session. Doing that and then immediately destroying it
+    // creates a race on iOS and can leave the live peer in a closed state.
+    if(this._talkMic){try{this._talkMic.getTracks().forEach(t=>t.stop());}catch(_){} this._talkMic=null;}
+    this._destroyGo2RTCLive();
+    this._talkPC=null; this._talkWS=null; this._talkUsingLivePC=false; this._talkSender=null;
+    this._renderStreamCtrl();
+
+    // Re-establish ordinary receive-only live video after ending talkback.
+    // This is a separate negotiation and therefore cannot inherit the
+    // sendonly microphone transceiver from the previous session.
+    if(this._viewMode !== 'grid' && !this._playing && this._config.two_way_audio && this._talkStreamName()) {
+      try { await this._mountGo2RTCVideo(null); }
+      catch(e) { console.warn('[Frigate] live restore after talkback failed',e); }
+    }
+  }
+};
+
+// ── src/card/talk.js ──
+/**
+ * Public method-group barrel for talkMethods.
+ *
+ * Keeping this entry point stable avoids coupling callers to the internal
+ * feature layout while allowing each concern to live in a focused module.
+ */
+const talkMethods = Object.assign(
+  {},
+  talkControlMethods,
+  microphoneMethods,
+  talkSessionMethods,
+);
+
+// ── src/card/data/metadata.js ──
+/**
+ * Frigate object/face/zone normalization and filter metadata discovery.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const metadataMethods = {
+_cc() { return this._camCache[this._activeCam?.entity] || mkCamState(); },
+
+async _ws(p) { return parseWs(await this._hass.callWS(p)); },
+
+_normalizeObjectLabel(value) {
+    // Frigate review segments encode a tracked object with a meaningful
+    // sub-label (face identity/custom classifier/etc.) as `<label>-verified`.
+    // That suffix is review metadata, not a separate object class. Keep the
+    // original review payload/sub_labels untouched, but expose/filter the base
+    // object label so `person` and `person-verified` are one logical label.
+    const raw=String(value??'').trim();
+    if(!raw) return '';
+    const normalized=raw.replace(/-verified$/i,'').trim();
+    return normalized || raw;
+  },
+
+_faceValueList(value) {
+    const out=[];
+    const add=(v)=>{
+      if(v==null) return;
+      if(Array.isArray(v)) { for(const item of v) add(item); return; }
+      const text=String(v).trim();
+      if(text) out.push(text);
+    };
+    add(value);
+    return [...new Set(out)];
+  },
+
+_eventFaceList(ev) {
+    // Frigate face recognition exposes a recognized identity through the
+    // event sub_label. Only treat person/face events as face identities so
+    // unrelated custom-classification sub-labels do not pollute this filter.
+    const label=this._normalizeObjectLabel(ev?.label ?? ev?.data?.label ?? '').toLowerCase();
+    if(label!=='person' && label!=='face') return [];
+    return this._faceValueList(ev?.sub_label ?? ev?.data?.sub_label);
+  },
+
+_reviewFaceList(rv) {
+    const labels=this._reviewLabelList(rv).map(x=>String(x).toLowerCase());
+    if(!labels.includes('person') && !labels.includes('face')) return [];
+    const data=rv?.data||{};
+    return this._faceValueList(data.sub_labels ?? data.sub_label);
+  },
+
+_faceDisplayName(value) {
+    return String(value??'').trim().replace(/_/g,' ');
+  },
+
+_eventZoneList(ev) {
+    const out=[];
+    for (const source of [ev?.zones, ev?.entered_zones, ev?.current_zones]) {
+      if (!Array.isArray(source)) continue;
+      for (const zone of source) if(zone!=null && String(zone).trim()) out.push(String(zone));
+    }
+    return [...new Set(out)];
+  },
+
+_reviewLabelList(rv) {
+    const data=rv?.data||{};
+    const values=[];
+    for(const source of [data.objects,data.labels]) {
+      if(!Array.isArray(source)) continue;
+      for(const value of source) {
+        const label=this._normalizeObjectLabel(value);
+        if(label) values.push(label);
+      }
+    }
+    return [...new Set(values)];
+  },
+
+_reviewZoneList(rv) {
+    const data=rv?.data||{};
+    const values=[];
+    for(const source of [data.zones,data.entered_zones]) {
+      if(Array.isArray(source)) for(const value of source) if(value!=null&&String(value).trim()) values.push(String(value));
+    }
+    return [...new Set(values)];
+  },
+
+_mergeLoadedFilterMetadata(cc, events=[], reviews=[]) {
+    if(!cc) return false;
+    const labels=new Set((Array.isArray(cc.filterLabels)?cc.filterLabels:[]).map(v=>this._normalizeObjectLabel(v)).filter(Boolean));
+    const faces=new Set(Array.isArray(cc.filterFaces)?cc.filterFaces:[]);
+    const zones=new Set(Array.isArray(cc.filterZones)?cc.filterZones:[]);
+    const beforeLabels=labels.size, beforeFaces=faces.size, beforeZones=zones.size;
+    for(const ev of (events||[])) {
+      const label=this._normalizeObjectLabel(ev?.label);
+      if(label) labels.add(label);
+      for(const face of this._eventFaceList(ev)) faces.add(face);
+      for(const zone of this._eventZoneList(ev)) zones.add(zone);
+    }
+    for(const rv of (reviews||[])) {
+      for(const label of this._reviewLabelList(rv)) labels.add(label);
+      for(const face of this._reviewFaceList(rv)) faces.add(face);
+      for(const zone of this._reviewZoneList(rv)) zones.add(zone);
+    }
+    cc.filterLabels=[...labels].sort((a,b)=>String(a).localeCompare(String(b)));
+    cc.filterFaces=[...faces].sort((a,b)=>String(a).localeCompare(String(b)));
+    cc.filterZones=[...zones].sort((a,b)=>String(a).localeCompare(String(b)));
+    const changed=labels.size!==beforeLabels||faces.size!==beforeFaces||zones.size!==beforeZones;
+    if(changed && cc===this._cc()) this._refreshOpenFilterSurfaces();
+    return changed;
+  },
+
+_refreshOpenFilterSurfaces() {
+    // Metadata can arrive while iOS owns a native Date/Time picker. Do not
+    // mutate sibling/ancestor DOM in that period: WebKit can close the system
+    // picker even when its exact <input> node remains attached. Queue the
+    // gallery/filter paint and keep the card visually stable until dismissal.
+    if(this._mediaPickerActive && this._galleryMode) {
+      this._mediaPickerPendingFilterRender=true;
+      this._mediaPickerPendingGalleryRender=true;
+      return;
+    }
+    const mp=this.shadowRoot?.querySelector('#media-filter-panel');
+    if(mp?.classList.contains('open')) this._renderMediaFilter();
+    const fp=this.shadowRoot?.querySelector('#filter-panel');
+    if(fp&&fp.style.display!=='none') this._renderFilter();
+    this._renderLegend();
+  },
+
+_filterDisplayName(kind,value,cc=this._cc()) {
+    const key=kind==='label' ? this._normalizeObjectLabel(value) : String(value??'');
+    const read=(state)=>kind==='zone' ? state?.filterZoneNames?.[key] : state?.filterLabelNames?.[key];
+    let named=read(cc);
+    if(!named) {
+      for(const state of Object.values(this._camCache||{})) { named=read(state); if(named) break; }
+    }
+    if(named) return String(named);
+    return cap(key.replace(/_/g,' '));
+  },
+
+async _loadFrigateFilterMetadata(force=false) {
+    const cc=this._cc();
+    const {clientId,cam}=cc;
+    const now=Date.now();
+    // Re-check Frigate periodically instead of treating the first metadata load
+    // as permanent. Labels/zones can be added or removed while HA stays open.
+    const fresh=cc.filterMetaLoaded && (now-Number(cc.filterMetaLoadedAt||0) < 60_000);
+    if(!clientId||!cam||cc.filterMetaLoading||(!force&&fresh)) return;
+    cc.filterMetaLoading=true;
+    // A real metadata refresh rebuilds the set so deleted/renamed zones do not
+    // live forever in the filter UI. Current loaded data is always included.
+    const labels=new Set();
+    const faces=new Set();
+    const zones=new Set();
+    const labelNames={};
+    const zoneNames={};
+    const takeEvent=(ev)=>{
+      const label=this._normalizeObjectLabel(ev?.label);
+      if(label) labels.add(label);
+      for(const face of this._eventFaceList(ev)) faces.add(face);
+      for(const z of this._eventZoneList(ev)) zones.add(z);
+    };
+    const takeReview=(rv)=>{
+      for(const l of this._reviewLabelList(rv)) labels.add(l);
+      for(const face of this._reviewFaceList(rv)) faces.add(face);
+      for(const z of this._reviewZoneList(rv)) zones.add(z);
+    };
+    for(const ev of (this._events||[])) takeEvent(ev);
+    for(const rv of (this._reviews||[])) takeReview(rv);
+
+    try {
+      const settled=await Promise.allSettled([
+        this._ws({type:'frigate/events/get',instance_id:clientId,cameras:[cam],limit:1000}),
+        this._ws({type:'frigate/reviews/get',instance_id:clientId,cameras:[cam],limit:500})
+      ]);
+      if(settled[0].status==='fulfilled') for(const ev of (Array.isArray(settled[0].value)?settled[0].value:[])) takeEvent(ev);
+      if(settled[1].status==='fulfilled') for(const rv of (Array.isArray(settled[1].value)?settled[1].value:[])) takeReview(rv);
+
+      // Deliberately no direct /api/config or /api/labels request here.
+      // The HA Frigate integration does not expose generic passthrough routes for
+      // those endpoints, so labels/zones are learned dynamically from the proxied
+      // event/review datasets instead of bypassing Home Assistant authentication.
+    } catch(_) {
+      // Keep the loaded event/review-derived values even if an enrichment path
+      // is unavailable on this Frigate/HA installation.
+    } finally {
+      cc.filterLabels=[...labels].sort((a,b)=>String(a).localeCompare(String(b)));
+      cc.filterFaces=[...faces].sort((a,b)=>String(a).localeCompare(String(b)));
+      cc.filterZones=[...zones].sort((a,b)=>String(a).localeCompare(String(b)));
+      cc.filterLabelNames=labelNames;
+      cc.filterZoneNames=zoneNames;
+      cc.filterMetaLoaded=true;
+      cc.filterMetaLoadedAt=Date.now();
+      cc.filterMetaLoading=false;
+      this._normalizeLiveFilterState();
+      this._refreshOpenFilterSurfaces();
+    }
+  }
+};
+
+// ── src/card/data/loading.js ──
+/**
+ * Frigate event/recording/review loading, calendar activity, subscriptions, and refresh scheduling.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const dataLoadingMethods = {
+_isNowWindow() {
+    const now=Math.floor(Date.now()/1000);
+    // The LIVE timeline is centered on `now`, so its newest window edge is
+    // intentionally ~5 minutes in the future. Comparing only _winEnd to now
+    // therefore made the card think a true LIVE view was *not* a now-window,
+    // which disabled the periodic Frigate refresh after startup.
+    if (this._timelineFollowingLive) return true;
+    const focus=Number(this._timelineFocusTs);
+    if (Number.isFinite(focus) && Math.abs(focus-now)<120) return true;
+    return Number(this._winStart)<=now+120 && Number(this._winEnd)>=now-120;
+  },
+
+async _loadWindow(replace, initialFullDay=false, timelineOnly=false) {
+    const requestSeq = ++this._timelineLoadSeq;
+    const activeEntity = this._activeCam?.entity || '';
+    const { clientId, cam } = this._cc();
+    if (!clientId || !cam) return;
+    const visibleSpan=Math.max(300,this._winEnd-this._winStart);
+    const now=Math.floor(Date.now()/1000);
+    // Keep the normal timeline fetch tight. A huge prefetch made rapid scrubs
+    // compete with each other on slower Frigate/HA installs and increased the
+    // chance that a late response would arrive after the user had moved again.
+    const buffer=Math.min(30*60,Math.max(visibleSpan,10*60));
+    const browseSpan=Math.max(3600,Number(this._config.window_hours||24)*3600);
+    // Media-browser queries are deliberately independent from the visible
+    // timeline viewport. On wide layouts the timeline remains on-screen while
+    // Clips/Recordings/Reviews occupy the adjacent column, so opening a browser
+    // must never repurpose _winStart/_winEnd (and therefore never zoom the
+    // timeline out to window_hours / 24h). A selected browser date/time range
+    // is used only for the Frigate data query.
+    const mediaBounds=(!timelineOnly && this._galleryMode) ? this._mediaQueryBounds(now) : null;
+    const after=mediaBounds
+      ? mediaBounds.start
+      : (initialFullDay ? Math.max(0, now-browseSpan) : Math.max(0,Math.floor(this._winStart-buffer)));
+    // A lightweight LIVE refresh should describe data Frigate could actually
+    // have finalized, not the intentional future half of the timeline view.
+    const before=mediaBounds
+      ? mediaBounds.end
+      : (initialFullDay ? now : (timelineOnly && this._timelineFollowingLive
+        ? now
+        : Math.floor(this._winEnd+buffer)));
+    // Do not let a slow request for an old scrub position overwrite the
+    // currently visible range. Advanced Camera Card uses the same principle:
+    // timeline range changes are data-source changes, not just CSS changes.
+    try {
+      // Mirror Advanced Camera Card's Frigate engine: event queries explicitly
+      // ask for clips, while the recording browser uses Frigate's hourly
+      // recordings summary. Raw recording segments remain the authoritative
+      // source for timeline drawing and exact playback seeking.
+      // Keep the three Frigate data sources independent. A recordings-summary
+      // command is not available in every HA/Frigate integration combination;
+      // it must never suppress otherwise-valid clips or raw recording segments.
+      const requests=[
+        this._ws({ type:'frigate/events/get', instance_id:clientId, cameras:[cam], after, before, limit:500, has_clip:true }),
+        this._ws({ type:'frigate/recordings/get', instance_id:clientId, camera:cam, after, before })
+      ];
+      // Summary is useful for the Recordings browser, but it is unnecessary
+      // overhead for high-frequency moving-timeline refreshes.
+      if (!timelineOnly) requests.push(
+        this._ws({ type:'frigate/recordings/summary', instance_id:clientId, camera:cam, timezone:this._tz() })
+      );
+      const settled=await Promise.allSettled(requests);
+      const evResult=settled[0], recResult=settled[1], summaryResult=settled[2];
+      if (
+        requestSeq !== this._timelineLoadSeq ||
+        activeEntity !== this._activeCam?.entity ||
+        clientId !== this._cc().clientId ||
+        cam !== this._cc().cam
+      ) return;
+      if (timelineOnly) {
+        const currentFocus=Number.isFinite(Number(this._timelineFocusTs))
+          ? Number(this._timelineFocusTs)
+          : ((this._winStart+this._winEnd)/2);
+        const liveSlack=this._timelineFollowingLive ? 15 : 0;
+        // A fling can travel farther than the prefetch buffer while this request
+        // is in flight. Never replace the visible recording cache with a range
+        // the playhead has already left; the scheduler will immediately request
+        // the newest position instead.
+        if (currentFocus < after || currentFocus > before+liveSlack) {
+          this._timelineDynamicPending=true;
+          return;
+        }
+      }
+      if (evResult.status==='fulfilled') {
+        const incomingEvents = Array.isArray(evResult.value) ? evResult.value : [];
+        const eventMap = new Map((this._events||[]).map(x=>[String(x.id),x]));
+        for (const item of incomingEvents) eventMap.set(String(item.id), item);
+        this._events = [...eventMap.values()];
+      } else {
+        console.warn('[Frigate] clips query failed', evResult.reason);
+      }
+      if (recResult.status==='fulfilled') {
+        this._recordings = Array.isArray(recResult.value) ? recResult.value : [];
+        this._recordingsLoaded = true;
+        // Track the exact wall-clock interval this recording result represents.
+        // A fast fling can move the viewport beyond this interval before the
+        // debounced Frigate query for the new position returns. Unknown time
+        // must never be rendered as a real "No Recording" gap.
+        this._recordingsRangeStart = after;
+        this._recordingsRangeEnd = before;
+        this._recordingsLoadedAt = Date.now();
+      } else {
+        console.warn('[Frigate] recording segments query failed', recResult.reason);
+      }
+      if (!timelineOnly) {
+        if (summaryResult?.status==='fulfilled') {
+          this._recordingBrowse = this._recordingHoursFromSummary(summaryResult.value, after, before);
+        } else {
+          // The raw segments remain a fully usable browser fallback.
+          this._recordingBrowse = this._mergeRecs(this._recordings||[]);
+          console.warn('[Frigate] recordings summary unavailable; using segments', summaryResult?.reason);
+        }
+      }
+      this._timelineDataDirty = true;
+      this._mergeLoadedFilterMetadata(this._cc(), this._events, this._reviews);
+    } catch(e) {
+      if (requestSeq !== this._timelineLoadSeq) return;
+      console.warn('[Frigate] timeline range load failed', e);
+    }
+    const ent=this._activeCam?.entity;
+    if (ent&&this._camCache[ent]) { this._camCache[ent].events=this._events; this._camCache[ent].recordings=this._recordings; this._camCache[ent].recordingsLoaded=this._recordingsLoaded; this._camCache[ent].recordingsRangeStart=this._recordingsRangeStart; this._camCache[ent].recordingsRangeEnd=this._recordingsRangeEnd; this._camCache[ent].recordingsLoadedAt=this._recordingsLoadedAt; }
+    if (!timelineOnly && this._tab==='reviews') await this._loadReviews();
+    if (requestSeq !== this._timelineLoadSeq) return;
+    if (!timelineOnly && this._eventsMode==='all') this._loadAllCamsBackground();
+    // Clips/Recordings are fed by _loadWindow(), including the periodic refresh
+    // timer. While a native picker is open, accept/cache the fresh data but do
+    // not let the normal _renderAll() path mutate any visible card DOM. Reviews
+    // does not use this path, which is why it appeared stable before this fix.
+    if(!timelineOnly && this._mediaPickerActive && this._galleryMode) {
+      this._mediaPickerPendingGalleryRender=true;
+      return;
+    }
+    if (timelineOnly) {
+      // The moving-window refresh is deliberately surgical: reconcile just the
+      // timeline so new events/recording bars/gaps appear while the gesture or
+      // LIVE motion is still happening. Stable-key reconciliation preserves
+      // existing thumbnail DOM and avoids the old pop/reload behavior.
+      this._scheduleTimelineRender(false);
+      this._updateTimelineLive();
+      this._renderRange();
+      this._renderTimelineZoomLabel();
+    } else if (this._timelineInteracting) {
+      this._scheduleTimelineRender(false);
+      this._updateTimelineLive();
+      this._renderRange();
+      this._renderTimelineZoomLabel();
+    } else {
+      this._renderAll();
+    }
+  },
+
+async _loadAllCamsBackground() {
+    const loadSeq=this._timelineLoadSeq;
+    const after=this._winStart, before=this._winEnd;
+    const others = this._config.cameras.filter(c => {
+      const cc = this._camCache[c.entity];
+      return c.entity !== this._activeCam?.entity && cc && cc.discovered;
+    });
+    await Promise.all(others.map(async c => {
+      const cc = this._camCache[c.entity];
+      try {
+        const ev = await this._ws({type:'frigate/events/get',instance_id:cc.clientId,cameras:[cc.cam],after,before,limit:200});
+        cc.events = Array.isArray(ev) ? ev : [];
+        this._mergeLoadedFilterMetadata(cc, cc.events, cc.reviews||[]);
+      } catch(_) {}
+    }));
+    if (loadSeq !== this._timelineLoadSeq || this._eventsMode!=='all') return;
+    this._renderList();
+  },
+
+async _loadKept() {
+    const {clientId,cam}=this._cc();
+    try {
+      const k=await this._ws({type:'frigate/events/get',instance_id:clientId,cameras:[cam],favorites:true,limit:200});
+      this._kept=Array.isArray(k)?k:[];
+      const ent=this._activeCam?.entity; if(ent&&this._camCache[ent]) this._camCache[ent].kept=this._kept;
+    } catch(_) { this._kept=[]; }
+  },
+
+_recordingHoursFromSummary(summary, after, before) {
+    const out=[];
+    if (!Array.isArray(summary)) return out;
+    for (const dayData of summary) {
+      const day=dayData?.day;
+      if (!day || !Array.isArray(dayData.hours)) continue;
+      for (const hourData of dayData.hours) {
+        const hour=Number(hourData?.hour);
+        if (!Number.isFinite(hour) || hour<0 || hour>23) continue;
+        const d=new Date(`${day}T${String(hour).padStart(2,'0')}:00:00`);
+        const start=Math.floor(d.getTime()/1000);
+        const end=start+3600;
+        if (end<=after || start>=before) continue;
+        out.push({start_time:Math.max(start,after),end_time:Math.min(end,before),events:Number(hourData.events||0),camera:this._cc().cam,_summary:true});
+      }
+    }
+    const seen=new Set();
+    return out.filter(r=>{const k=`${r.start_time}-${r.end_time}`;if(seen.has(k))return false;seen.add(k);return true;}).sort((a,b)=>a.start_time-b.start_time);
+  },
+
+async _loadReviews() {
+    const {clientId,cam}=this._cc();
+    try {
+      const now=Math.floor(Date.now()/1000);
+      const currentWindow=this._isNowWindow();
+      const galleryRange=!!this._galleryMode;
+      const browseSpan=Math.max(3600,Number(this._config.window_hours||24)*3600);
+      const mediaBounds=galleryRange ? this._mediaQueryBounds(now) : null;
+      const after=mediaBounds ? mediaBounds.start : (currentWindow ? now-browseSpan : this._winStart);
+      const before=mediaBounds ? mediaBounds.end : (currentWindow ? now : this._winEnd);
+      const r=await this._ws({type:'frigate/reviews/get',instance_id:clientId,cameras:[cam],after,before,limit:500});
+      this._reviews=Array.isArray(r)?r:[];
+      const active=this._cc();
+      active.reviews=this._reviews;
+      this._mergeLoadedFilterMetadata(active, this._events, this._reviews);
+    } catch(_) { this._reviews=[]; }
+  },
+
+async _loadCalendar() {
+    const {clientId,cam}=this._cc();
+    try {
+      const sum=await this._ws({type:'frigate/events/summary',instance_id:clientId,timezone:this._tz()});
+      if(Array.isArray(sum)) this._daysWithActivity=new Set(sum.filter(s=>s.camera===cam&&s.day).map(s=>s.day));
+    } catch(_) {}
+  },
+
+_tz() { return this._hass?.config?.time_zone||Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC'; },
+
+async _subscribe() {
+    const {clientId}=this._cc(); if(!this._hass?.connection||!clientId) return;
+    try {
+      this._unsub=this._hass.connection.subscribeMessage(
+        msg=>{ if(msg?.type==='end'&&this._isNowWindow()) this._scheduleReload(); },
+        {type:'frigate/events/subscribe',instance_id:clientId}
+      );
+    } catch(_) {}
+  },
+
+_scheduleReload() { clearTimeout(this._rt); this._rt=setTimeout(()=>this._loadWindow(true),1500); }
+};
+
+// ── src/card/data.js ──
+/**
+ * Public method-group barrel for dataMethods.
+ *
+ * Keeping this entry point stable avoids coupling callers to the internal
+ * feature layout while allowing each concern to live in a focused module.
+ */
+const dataMethods = Object.assign(
+  {},
+  metadataMethods,
+  dataLoadingMethods,
+);
+
+// ── src/card/render-shell.js ──
+/**
+ * Stable card DOM shell and top-level event wiring.
+ *
+ * Styling is intentionally kept in src/styles/shell.js so this module remains
+ * focused on semantic markup and lifecycle wiring.
+ */
+/** Render the stable card shell and wire top-level DOM interactions. */
+const renderShellMethods = {
+_renderShell() {
+    const multiCam = this._config.cameras.length > 1;
+
+    this.shadowRoot.innerHTML = `<style>${SHELL_STYLES}</style>
       <ha-card class="card ${this._config.theme==='light'?'theme-light':this._config.theme==='auto'?'theme-auto':''} ${this._config.bg_color?'custom-bg':''} ${Number(this._config.transparency)>0?'card-transparent':''} ${(this._config.bg_color||Number(this._config.transparency)>0)?'surface-override':''} ${this._isEditorPreview()?'editor-preview':''}" id="card">
         <div class="layout" id="layout">
-          <!-- v2.0.52 responsive workspace. These are real sibling columns so the
+          <!-- Responsive workspace. These are real sibling columns so the
                card can become video | timeline | media on dashboard-width cards
                without cloning any players, timelines, or gallery DOM. -->
           <div class="col-left workspace-feed">
@@ -5343,6 +5715,9 @@ ${STYLES}
 };
 
 // ── src/card/layout.js ──
+/**
+ * Card geometry, responsive sizing, stream resize behavior and layout synchronization.
+ */
 // Prototype methods grouped by responsibility.
 const layoutMethods = {
 _parseAspectRatio(v) {
@@ -5400,7 +5775,7 @@ _watchAutoAspectMedia(media) {
 _applyCardStyle() {
     const card = this.shadowRoot.querySelector('.card'); if (!card) return;
 
-    // v2.0.45 player geometry authority. Home Assistant mounts the live card
+    // Player geometry authority. Home Assistant mounts the live card
     // before hui-card-preview has necessarily finished joining the composed DOM.
     // A later ResizeObserver pass can therefore add editor-preview after the first
     // paint. Geometry must be recalculated at that transition instead of allowing
@@ -5718,9 +6093,14 @@ _renderCamSwitcher() {
   }
 };
 
-// ── src/card/browser.js ──
-// Prototype methods grouped by responsibility.
-const browserMethods = {
+// ── src/card/media/picker.js ──
+/**
+ * Native date/time picker ownership and delegated form-change handling.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const mediaPickerMethods = {
 _mediaTemporalInput(target) {
     const el=target?.nodeType===1 ? target : null;
     if(!el?.matches) return null;
@@ -5795,8 +6175,17 @@ _change(e) {
     // events before the user taps Done. The next pointer/touch outside the
     // control releases the lock and paints the already-loaded filtered results.
     if(!this._isIOSRecordingPlatform()) this._scheduleMediaPickerRelease(260);
-  },
+  }
+};
 
+// ── src/card/media/navigation.js ──
+/**
+ * Media browser navigation, delegated clicks, tabs, and gallery-mode transitions.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const mediaNavigationMethods = {
 _click(e) {
     const galleryTab = e.target.closest('[data-gallery-tab]');
     if (galleryTab) return this._setGalleryMode(galleryTab.dataset.galleryTab);
@@ -5943,6 +6332,49 @@ async _setGalleryMode(tab) {
     });
   },
 
+_timelineDefaultSpanSeconds() {
+    return Math.max(5*60,Math.min(60*60,Math.round(Number(this._config?.timeline?.default_minutes||10)*60)));
+  },
+
+_resetTimelineToNow10m() {
+    const now=Math.floor(Date.now()/1000);
+    const span=this._timelineDefaultSpanSeconds();
+    this._winStart=now-span/2;
+    this._winEnd=now+span/2;
+    this._timelineFocusTs=now;
+    this._scrubTarget=now;
+    this._timelineZoom=3600/span;
+    this._timelineFollowingLive=true;
+    this._exhausted=false;
+    this._calMonth=null;
+    this._timelineDataDirty=true;
+    this._renderTimelineZoomLabel();
+  },
+
+_setTab(tab) {
+    this._galleryMode = '';
+    const gallery=this.shadowRoot.querySelector('#media-gallery'); if(gallery) { gallery.classList.remove('open'); gallery.innerHTML=''; }
+    const timeline=this.shadowRoot.querySelector('#timeline-view'); if(timeline) timeline.style.display=this._config.timeline.enabled?'':'none';
+    this._syncResponsiveWorkspace();
+    this._tab = tab;
+    this.shadowRoot.querySelectorAll('[data-tab]').forEach(p=>p.classList.toggle('active',p.dataset.tab===tab));
+    const lbl=this.shadowRoot.querySelector('#list-label');
+    if (lbl) lbl.textContent=({live:'Recent events',recordings:'Recordings',clips:'Clips',snapshot:'Snapshots',reviews:'Reviews',kept:'Kept'})[tab]||tab;
+    if (tab==='live') this._showLive();
+    if (tab==='reviews') this._loadReviews().then(()=>this._renderList());
+    if (tab==='kept') this._loadKept().then(()=>this._renderList());
+    this._renderList();
+  }
+};
+
+// ── src/card/media/gallery.js ──
+/**
+ * Clips, recordings, and reviews gallery rendering.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const mediaGalleryMethods = {
 _renderGallery(force=false) {
     const gallery=this.shadowRoot.querySelector('#media-gallery'); if(!gallery || !this._galleryMode) return;
     // While a native date/time picker owns the screen, do not mutate any part
@@ -5990,16 +6422,25 @@ _renderGallery(force=false) {
     this._renderMediaFilter(force);
   },
 
-_mediaFilterActive() {
-    const f=this._mediaFilter;
-    const cameraActive=this._eventsMode==='all' && (this._config?.cameras?.length||0)>1 && f.camera!=='all';
-    return cameraActive||f.label!=='all'||f.face!=='all'||f.zone!=='all'||f.favorites||f.reviewed!=='all'||f.severity!=='all'||f.duration!=='all'||f.date!=='all'||!!f.timeStart||!!f.timeEnd;
-  },
-
 _mediaCameraDisplay(camera) {
     const key=String(camera||'');
     const cfg=this._config?.cameras?.find(c=>String(this._camCache[c.entity]?.cam||'')===key);
     return cfg ? (cfg.name||cap(camDisplayName(cfg))) : cap(key.replace(/_/g,' '));
+  }
+};
+
+// ── src/card/media/filters.js ──
+/**
+ * Media filter state, date/time ranges, filtering predicates, and filter UI.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const mediaFilterMethods = {
+_mediaFilterActive() {
+    const f=this._mediaFilter;
+    const cameraActive=this._eventsMode==='all' && (this._config?.cameras?.length||0)>1 && f.camera!=='all';
+    return cameraActive||f.label!=='all'||f.face!=='all'||f.zone!=='all'||f.favorites||f.reviewed!=='all'||f.severity!=='all'||f.duration!=='all'||f.date!=='all'||!!f.timeStart||!!f.timeEnd;
   },
 
 _mediaFilterValues() {
@@ -6211,46 +6652,32 @@ _renderMediaFilter(force=false) {
     const review=this._galleryMode==='reviews'?`<div class="media-filter-row"><span class="media-filter-label">Status</span>${chip('reviewed','unreviewed','Unreviewed',f.reviewed==='unreviewed')}${chip('reviewed','reviewed','Reviewed',f.reviewed==='reviewed')}${chip('reviewed','all','All',f.reviewed==='all')}</div><div class="media-filter-row"><span class="media-filter-label">Type</span>${chip('severity','all','All',f.severity==='all')}${chip('severity','alert','Alerts',f.severity==='alert')}${chip('severity','detection','Detections',f.severity==='detection')}</div>`:'';
     p.innerHTML=`${dateRow}${timeRow}${cameraRow}${labelRow}${faceRow}${zoneRow}${duration}${review}${common}<div class="media-filter-row"><button id="media-filter-reset" class="media-filter-reset">Reset filters</button></div>`;
     p.classList.toggle('open',wasOpen);
-  },
-
-_timelineDefaultSpanSeconds() {
-    return Math.max(5*60,Math.min(60*60,Math.round(Number(this._config?.timeline?.default_minutes||10)*60)));
-  },
-
-_resetTimelineToNow10m() {
-    const now=Math.floor(Date.now()/1000);
-    const span=this._timelineDefaultSpanSeconds();
-    this._winStart=now-span/2;
-    this._winEnd=now+span/2;
-    this._timelineFocusTs=now;
-    this._scrubTarget=now;
-    this._timelineZoom=3600/span;
-    this._timelineFollowingLive=true;
-    this._exhausted=false;
-    this._calMonth=null;
-    this._timelineDataDirty=true;
-    this._renderTimelineZoomLabel();
-  },
-
-_setTab(tab) {
-    this._galleryMode = '';
-    const gallery=this.shadowRoot.querySelector('#media-gallery'); if(gallery) { gallery.classList.remove('open'); gallery.innerHTML=''; }
-    const timeline=this.shadowRoot.querySelector('#timeline-view'); if(timeline) timeline.style.display=this._config.timeline.enabled?'':'none';
-    this._syncResponsiveWorkspace();
-    this._tab = tab;
-    this.shadowRoot.querySelectorAll('[data-tab]').forEach(p=>p.classList.toggle('active',p.dataset.tab===tab));
-    const lbl=this.shadowRoot.querySelector('#list-label');
-    if (lbl) lbl.textContent=({live:'Recent events',recordings:'Recordings',clips:'Clips',snapshot:'Snapshots',reviews:'Reviews',kept:'Kept'})[tab]||tab;
-    if (tab==='live') this._showLive();
-    if (tab==='reviews') this._loadReviews().then(()=>this._renderList());
-    if (tab==='kept') this._loadKept().then(()=>this._renderList());
-    this._renderList();
   }
 };
 
-// ── src/card/event-playback.js ──
-// Prototype methods grouped by responsibility.
-const eventPlaybackMethods = {
+// ── src/card/browser.js ──
+/**
+ * Public method-group barrel for browserMethods.
+ *
+ * Keeping this entry point stable avoids coupling callers to the internal
+ * feature layout while allowing each concern to live in a focused module.
+ */
+const browserMethods = Object.assign(
+  {},
+  mediaPickerMethods,
+  mediaNavigationMethods,
+  mediaGalleryMethods,
+  mediaFilterMethods,
+);
+
+// ── src/card/playback/event-controller.js ──
+/**
+ * Event selection, playback entry/exit, clip/snapshot actions, and image retries.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const eventPlaybackControllerMethods = {
 _allDisplayEvents() {
     if (this._eventsMode==='all') {
       const seen=new Set(); const all=[];
@@ -6441,21 +6868,6 @@ _handleMediaImageError(e) {
     parent?.classList.add('thumb-failed');
   },
 
-_mediaForEvent(ev,file,dl=false) {
-    const id=String(ev?.id??ev?.event_id??'');
-    const camera=String(ev?.camera||'');
-    let clientId=this._cc().clientId;
-    if(camera) {
-      const owner=this._config?.cameras?.map(c=>this._camCache[c.entity]).find(cc=>cc&&String(cc.cam)===camera);
-      if(owner?.clientId) clientId=owner.clientId;
-    }
-    return `/api/frigate/${encodeURIComponent(String(clientId))}/notifications/${encodeURIComponent(id)}/${file}${dl?'?download=true':''}`;
-  },
-
-_media(id,file,dl) { return `/api/frigate/${encodeURIComponent(String(this._cc().clientId))}/notifications/${encodeURIComponent(String(id))}/${file}${dl?'?download=true':''}`; },
-
-async _mediaSigned(id,file,dl) { return this._signed(this._media(id,file,dl)); },
-
 async _showClip(ev) {
     if (!ev) return;
     // Event playback owns the media pipeline. Clear any hourly-recording state
@@ -6530,6 +6942,40 @@ async _showClipById(id) {
       if(this._playSeq===token) viewer.innerHTML='<div class="ld">Unable to play recording</div>';
     }
   },
+
+async _showSnapshot(ev) {
+    this._enter(); this._playing={id:ev.id};
+    const v=this.shadowRoot.querySelector('#viewer');
+    v.innerHTML='<div class="ld">Loading…</div>';
+    const token = ++this._playSeq;
+    const url = await this._resolveFrigateMedia(ev, 'snapshot');
+    if (this._playSeq !== token) return;
+    v.innerHTML=`<img class="snap" src="${url}">`;
+  }
+};
+
+// ── src/card/playback/media-source.js ──
+/**
+ * Frigate/Home Assistant media URL resolution and recorded-media element creation.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const mediaSourceMethods = {
+_mediaForEvent(ev,file,dl=false) {
+    const id=String(ev?.id??ev?.event_id??'');
+    const camera=String(ev?.camera||'');
+    let clientId=this._cc().clientId;
+    if(camera) {
+      const owner=this._config?.cameras?.map(c=>this._camCache[c.entity]).find(cc=>cc&&String(cc.cam)===camera);
+      if(owner?.clientId) clientId=owner.clientId;
+    }
+    return `/api/frigate/${encodeURIComponent(String(clientId))}/notifications/${encodeURIComponent(id)}/${file}${dl?'?download=true':''}`;
+  },
+
+_media(id,file,dl) { return `/api/frigate/${encodeURIComponent(String(this._cc().clientId))}/notifications/${encodeURIComponent(String(id))}/${file}${dl?'?download=true':''}`; },
+
+async _mediaSigned(id,file,dl) { return this._signed(this._media(id,file,dl)); },
 
 async _resolveFrigatePlaybackUrl(ev) {
     const {clientId,cam}=this._cc();
@@ -6656,18 +7102,17 @@ _createHlsPlayer(url, options={}) {
     player.setAttribute('allow-exoplayer','');
     if (url) player.url = this._absoluteHaMediaUrl(url);
     return player;
-  },
+  }
+};
 
-async _showSnapshot(ev) {
-    this._enter(); this._playing={id:ev.id};
-    const v=this.shadowRoot.querySelector('#viewer');
-    v.innerHTML='<div class="ld">Loading…</div>';
-    const token = ++this._playSeq;
-    const url = await this._resolveFrigateMedia(ev, 'snapshot');
-    if (this._playSeq !== token) return;
-    v.innerHTML=`<img class="snap" src="${url}">`;
-  },
-
+// ── src/card/playback/time.js ──
+/**
+ * Home Assistant-aware time formatting and recording coverage helpers.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const playbackTimeMethods = {
 _fmtDurS(s) { // format seconds → m:ss or h:mm:ss
     const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), ss=s%60;
     return h>0 ? `${h}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}` : `${m}:${String(ss).padStart(2,'0')}`;
@@ -6742,9 +7187,28 @@ _recordingCovers(ts) {
   }
 };
 
-// ── src/card/recording-playback.js ──
-// Prototype methods grouped by responsibility.
-const recordingPlaybackMethods = {
+// ── src/card/event-playback.js ──
+/**
+ * Public method-group barrel for eventPlaybackMethods.
+ *
+ * Keeping this entry point stable avoids coupling callers to the internal
+ * feature layout while allowing each concern to live in a focused module.
+ */
+const eventPlaybackMethods = Object.assign(
+  {},
+  eventPlaybackControllerMethods,
+  mediaSourceMethods,
+  playbackTimeMethods,
+);
+
+// ── src/card/playback/recording-time.js ──
+/**
+ * Frigate recording segment math, inpoint offsets, and seek/progress calculations.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const recordingTimeMethods = {
 _frigateSegmentDuration(seg) {
     const d=Number(seg?.duration);
     if (Number.isFinite(d) && d >= 0) return d;
@@ -6822,6 +7286,34 @@ _frigateProgress(playerTime, recordings, inpointOffset=0) {
     return Number(last?.end_time);
   },
 
+_isIOSRecordingPlatform() {
+    const ua=navigator.userAgent||'';
+    return /iPad|iPhone|iPod/.test(ua) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+  },
+
+_iosRecordingWindow(target) {
+    // Native HLS on iOS is reliable once the source is small, but seeking deep
+    // into a full one-hour playlist can take several seconds while WebKit walks
+    // the playlist/segment index. Keep iOS playback in deterministic 5-minute
+    // VOD windows so the maximum seek offset is < 300s. Desktop continues using
+    // the full hour with hls.js, which is efficient at long-range seeks.
+    const bucket=5*60;
+    const t=Math.max(0,Math.floor(Number(target)||0));
+    const start=Math.floor(t/bucket)*bucket;
+    const now=Math.floor(Date.now()/1000);
+    const end=Math.max(start+1,Math.min(start+bucket,now));
+    return {start,end};
+  }
+};
+
+// ── src/card/playback/recording-shell.js ──
+/**
+ * Recorded-video shell state, stable media binding, video lookup, and fullscreen behavior.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const recordingShellMethods = {
 _cancelActivePlayback(keepSession=false) {
     if (typeof this._activePlaybackCleanup === 'function') {
       try { this._activePlaybackCleanup(); } catch (_) {}
@@ -6906,7 +7398,7 @@ _bindStableRecordingVideo(video, session) {
       const current=Number(video.currentTime);
 
       // Match Frigate's controller for *every* seek, not just the initial load:
-      // assign currentTime, wait for `seeked`, then play. v2.0.5 accidentally
+      // assign currentTime, wait for `seeked`, then play. An earlier implementation accidentally
       // bypassed this path for same-hour timeline scrubs and called play()
       // immediately, which can strand Safari/WKWebView in a buffering state.
       if (Number.isFinite(current) && Math.abs(current-clamped)<0.35) {
@@ -7047,25 +7539,66 @@ _bindStableRecordingVideo(video, session) {
     this._activePlaybackCleanup=session.cleanup;
   },
 
-_isIOSRecordingPlatform() {
-    const ua=navigator.userAgent||'';
-    return /iPad|iPhone|iPod/.test(ua) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+_findVideo(node, depth, crossedShadow) {
+    if (!node || (depth||0) > 6) return null;
+    if (node.tagName === 'VIDEO') { node._viaShadow = !!crossedShadow; return node; }
+    if (node.shadowRoot) {
+      const v = node.shadowRoot.querySelector('video');
+      if (v) { v._viaShadow = true; return v; }
+      for (const child of node.shadowRoot.children) { const f = this._findVideo(child, (depth||0)+1, true); if (f) return f; }
+    }
+    const children = node.children || [];
+    for (const child of children) { const f = this._findVideo(child, (depth||0)+1, crossedShadow); if (f) return f; }
+    return null;
   },
 
-_iosRecordingWindow(target) {
-    // Native HLS on iOS is reliable once the source is small, but seeking deep
-    // into a full one-hour playlist can take several seconds while WebKit walks
-    // the playlist/segment index. Keep iOS playback in deterministic 5-minute
-    // VOD windows so the maximum seek offset is < 300s. Desktop continues using
-    // the full hour with hls.js, which is efficient at long-range seeks.
-    const bucket=5*60;
-    const t=Math.max(0,Math.floor(Number(target)||0));
-    const start=Math.floor(t/bucket)*bucket;
-    const now=Math.floor(Date.now()/1000);
-    const end=Math.max(start+1,Math.min(start+bucket,now));
-    return {start,end};
-  },
+_fullscreen(el) {
+    if (!el) return;
+    // Live WebRTC must stay in the exact same DOM node. Never invoke
+    // webkitEnterFullscreen() on its nested video and never mutate srcObject.
+    // The wrapper/fullscreen element preserves the stream session.
+    const liveWrap = el.id === 'eng-wrap' || !!el.closest?.('#eng-wrap');
+    if (liveWrap) {
+      // Never hand a live MediaStream video to iOS's native fullscreen
+      // compositor. Keep the exact same player/peer inline and fullscreen only
+      // the wrapper. This avoids the WebKit state where video rendering freezes
+      // while the stream's audio track continues normally.
+      if(this._isIOSRecordingPlatform()) {
+        el.classList.add('live-pseudo-fullscreen');
+        this._livePseudoFullscreen=true;
+        this._removeLiveFsMirror();
+        this._addLiveFsExit(el);
+        const v=this._go2rtcLive?.video || this._findVideo(this._engine);
+        try { v?.setAttribute?.('controlslist','nofullscreen'); const p=v?.play?.(); if(p?.catch)p.catch(()=>{}); } catch(_) {}
+        return;
+      }
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (req) { try { const p=req.call(el); if(p?.catch) p.catch(()=>{}); return; } catch(_) {} }
+      el.classList.add('live-pseudo-fullscreen');
+      this._livePseudoFullscreen = true;
+      this._addLiveFsExit(el);
+      return;
+    }
+    const vid = el.tagName === 'VIDEO' ? el : this._findVideo(el);
+    const isLivePlayerVideo = vid && vid._viaShadow;
+    if (vid) delete vid._viaShadow;
+    if (vid && !isLivePlayerVideo && typeof vid.webkitEnterFullscreen === 'function' && vid.webkitSupportsFullscreen !== false) {
+      try { vid.webkitEnterFullscreen(); return; } catch (_) { /* fall through */ }
+    }
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) { const p=req.call(el); if (p?.catch) p.catch(()=>{}); return; }
+    if (vid) { const req2=vid.requestFullscreen || vid.webkitRequestFullscreen; if(req2) req2.call(vid); }
+  }
+};
 
+// ── src/card/playback/recording-source.js ──
+/**
+ * Recording media-source identifiers, Home Assistant resolution, and signed VOD playlists.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const recordingSourceMethods = {
 _frigateRecordingMediaSourceId(clientId, cam, sourceStart) {
     try {
       const tz=this._hass?.config?.time_zone || Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -7092,6 +7625,53 @@ async _resolveFrigateRecordingHourMedia(clientId, cam, sourceStart) {
     }
   },
 
+async _signed(path) { try { const r=await this._hass.callWS({type:'auth/sign_path',path,expires:3600}); return r?.path||path; } catch(_) { return path; } },
+
+async _resolveSignedVodPlaylist(masterPath) {
+    // Home Assistant signed paths authenticate the exact manifest URL. Frigate's
+    // master playlist points at a second manifest (for example index-v1-a1.m3u8).
+    // Reusing the master.m3u8 authSig on that child manifest yields HTTP 401.
+    // Resolve the master ourselves, then sign the exact child manifest path that
+    // ha-hls-player/hls.js will load. The child manifest propagates that query
+    // string to its media segments; HA's VOD segment proxy validates the signed
+    // directory prefix for .m4s/.mp4/.ts requests.
+    const signedMaster=await this._signed(masterPath);
+    const masterUrl=this._absoluteHaMediaUrl(signedMaster);
+    try {
+      const resp=await fetch(masterUrl,{credentials:'same-origin',cache:'no-store'});
+      if(!resp.ok) throw new Error(`master manifest ${resp.status}`);
+      const text=await resp.text();
+      const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+      let childLine='';
+      for(let i=0;i<lines.length;i++) {
+        if(lines[i].startsWith('#EXT-X-STREAM-INF')) {
+          for(let j=i+1;j<lines.length;j++) {
+            if(!lines[j].startsWith('#')) { childLine=lines[j]; break; }
+          }
+          if(childLine) break;
+        }
+      }
+      // Some Frigate/nginx-vod responses may contain a direct media playlist.
+      // In that case the signed master itself is already the final HLS source.
+      if(!childLine) return masterUrl;
+      const childUrl=new URL(childLine,masterUrl);
+      const signedChild=await this._signed(childUrl.pathname);
+      return this._absoluteHaMediaUrl(signedChild);
+    } catch(err) {
+      console.warn('[Frigate] unable to resolve/sign VOD child manifest',err);
+      return masterUrl;
+    }
+  }
+};
+
+// ── src/card/playback/recording-player.js ──
+/**
+ * HLS/MP4 attachment and continuous recording playback control.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const recordingPlayerMethods = {
 _attachStableHlsPlayer(session, url) {
     const holder=session.holder;
     // `auth/sign_path` returns a relative path. HA's HLS component requires an
@@ -7457,102 +8037,40 @@ _toggleRecSeek(row) {
     });
     // Play from start immediately so user sees something while positioning the bar
     this._showRecording(rs, re);
-  },
-
-async _signed(path) { try { const r=await this._hass.callWS({type:'auth/sign_path',path,expires:3600}); return r?.path||path; } catch(_) { return path; } },
-
-async _resolveSignedVodPlaylist(masterPath) {
-    // Home Assistant signed paths authenticate the exact manifest URL. Frigate's
-    // master playlist points at a second manifest (for example index-v1-a1.m3u8).
-    // Reusing the master.m3u8 authSig on that child manifest yields HTTP 401.
-    // Resolve the master ourselves, then sign the exact child manifest path that
-    // ha-hls-player/hls.js will load. The child manifest propagates that query
-    // string to its media segments; HA's VOD segment proxy validates the signed
-    // directory prefix for .m4s/.mp4/.ts requests.
-    const signedMaster=await this._signed(masterPath);
-    const masterUrl=this._absoluteHaMediaUrl(signedMaster);
-    try {
-      const resp=await fetch(masterUrl,{credentials:'same-origin',cache:'no-store'});
-      if(!resp.ok) throw new Error(`master manifest ${resp.status}`);
-      const text=await resp.text();
-      const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
-      let childLine='';
-      for(let i=0;i<lines.length;i++) {
-        if(lines[i].startsWith('#EXT-X-STREAM-INF')) {
-          for(let j=i+1;j<lines.length;j++) {
-            if(!lines[j].startsWith('#')) { childLine=lines[j]; break; }
-          }
-          if(childLine) break;
-        }
-      }
-      // Some Frigate/nginx-vod responses may contain a direct media playlist.
-      // In that case the signed master itself is already the final HLS source.
-      if(!childLine) return masterUrl;
-      const childUrl=new URL(childLine,masterUrl);
-      const signedChild=await this._signed(childUrl.pathname);
-      return this._absoluteHaMediaUrl(signedChild);
-    } catch(err) {
-      console.warn('[Frigate] unable to resolve/sign VOD child manifest',err);
-      return masterUrl;
-    }
-  },
-
-_findVideo(node, depth, crossedShadow) {
-    if (!node || (depth||0) > 6) return null;
-    if (node.tagName === 'VIDEO') { node._viaShadow = !!crossedShadow; return node; }
-    if (node.shadowRoot) {
-      const v = node.shadowRoot.querySelector('video');
-      if (v) { v._viaShadow = true; return v; }
-      for (const child of node.shadowRoot.children) { const f = this._findVideo(child, (depth||0)+1, true); if (f) return f; }
-    }
-    const children = node.children || [];
-    for (const child of children) { const f = this._findVideo(child, (depth||0)+1, crossedShadow); if (f) return f; }
-    return null;
-  },
-
-_fullscreen(el) {
-    if (!el) return;
-    // Live WebRTC must stay in the exact same DOM node. Never invoke
-    // webkitEnterFullscreen() on its nested video and never mutate srcObject.
-    // The wrapper/fullscreen element preserves the stream session.
-    const liveWrap = el.id === 'eng-wrap' || !!el.closest?.('#eng-wrap');
-    if (liveWrap) {
-      // Never hand a live MediaStream video to iOS's native fullscreen
-      // compositor. Keep the exact same player/peer inline and fullscreen only
-      // the wrapper. This avoids the WebKit state where video rendering freezes
-      // while the stream's audio track continues normally.
-      if(this._isIOSRecordingPlatform()) {
-        el.classList.add('live-pseudo-fullscreen');
-        this._livePseudoFullscreen=true;
-        this._removeLiveFsMirror();
-        this._addLiveFsExit(el);
-        const v=this._go2rtcLive?.video || this._findVideo(this._engine);
-        try { v?.setAttribute?.('controlslist','nofullscreen'); const p=v?.play?.(); if(p?.catch)p.catch(()=>{}); } catch(_) {}
-        return;
-      }
-      const req = el.requestFullscreen || el.webkitRequestFullscreen;
-      if (req) { try { const p=req.call(el); if(p?.catch) p.catch(()=>{}); return; } catch(_) {} }
-      el.classList.add('live-pseudo-fullscreen');
-      this._livePseudoFullscreen = true;
-      this._addLiveFsExit(el);
-      return;
-    }
-    const vid = el.tagName === 'VIDEO' ? el : this._findVideo(el);
-    const isLivePlayerVideo = vid && vid._viaShadow;
-    if (vid) delete vid._viaShadow;
-    if (vid && !isLivePlayerVideo && typeof vid.webkitEnterFullscreen === 'function' && vid.webkitSupportsFullscreen !== false) {
-      try { vid.webkitEnterFullscreen(); return; } catch (_) { /* fall through */ }
-    }
-    const req = el.requestFullscreen || el.webkitRequestFullscreen;
-    if (req) { const p=req.call(el); if (p?.catch) p.catch(()=>{}); return; }
-    if (vid) { const req2=vid.requestFullscreen || vid.webkitRequestFullscreen; if(req2) req2.call(vid); }
   }
 };
 
+// ── src/card/recording-playback.js ──
+/**
+ * Public method-group barrel for recordingPlaybackMethods.
+ *
+ * Keeping this entry point stable avoids coupling callers to the internal
+ * feature layout while allowing each concern to live in a focused module.
+ */
+const recordingPlaybackMethods = Object.assign(
+  {},
+  recordingTimeMethods,
+  recordingShellMethods,
+  recordingSourceMethods,
+  recordingPlayerMethods,
+);
+
 // ── src/card/actions.js ──
+/**
+ * User commands that change card state: navigation, retention, filters and calendar selection.
+ */
 // Prototype methods grouped by responsibility.
 const actionMethods = {
-_goNow() { this._downloadRange=null; this._resetTimelineToNow10m(); this._loadWindow(true); this._renderTimeline(true); this._renderRange(); this._renderTimelineZoomLabel(); this._renderStreamCtrl(); },
+_goNow() {
+    this._downloadRange=null;
+    this._resetTimelineToNow10m();
+    this._loadWindow(true);
+    this._renderTimeline(true);
+    this._renderRange();
+    this._renderTimelineZoomLabel();
+    this._renderStreamCtrl();
+    this._updateTimelineDateLabel?.();
+  },
 
 _download(id,file) { const a=document.createElement('a'); a.href=this._media(id,file,true); a.download=`${this._cc().cam}_${id}_${file}`; document.body.appendChild(a); a.click(); a.remove(); },
 
@@ -7673,7 +8191,18 @@ _pickDay(ds) {
     this._renderTimeline(true);
     this._renderRange();
     this._renderTimelineZoomLabel();
+    this._updateTimelineDateLabel?.(ds);
     this._loadWindow(true);
+
+    // Calendar selection is a complete navigation action. Reuse the normal
+    // timeline seek path so single-camera and Multiview playback keep the same
+    // source selection, iOS handling, and synchronization semantics.
+    const target=Number(this._timelineFocusTs);
+    if(Number.isFinite(target) && typeof this._seekTimelineTarget==='function') {
+      Promise.resolve(this._seekTimelineTarget(target)).catch((error)=>{
+        console.warn('[Sightline] timeline calendar seek failed',error);
+      });
+    }
   },
 
 _renderCal() {
@@ -7691,9 +8220,14 @@ _renderCal() {
   }
 };
 
-// ── src/card/timeline-interaction.js ──
-// Prototype methods grouped by responsibility.
-const timelineInteractionMethods = {
+// ── src/card/timeline/filters.js ──
+/**
+ * Live timeline filter normalization, predicates, and filter rendering.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const timelineFilterMethods = {
 _normalizeLiveFilterState() {
     const labels=this._labels(), faces=this._faces(), zones=this._zones();
     if(this._filterLabel!=='all'&&!labels.includes(this._filterLabel)) this._filterLabel='all';
@@ -7735,8 +8269,137 @@ _renderFilter() {
       <div class="frow"><span class="frow-l">Show</span>
         <button class="chip ${!this._favOnly?'on':''}" data-favonly="0">All</button>
         <button class="chip ${this._favOnly?'on':''}" data-favonly="1">★ Favorites</button></div>`;
+  }
+};
+
+// ── src/card/timeline/calendar.js ──
+/**
+ * Native timeline date picker and selected-date presentation.
+ *
+ * iOS/Safari requires the user's gesture to land directly on a real date input.
+ * The input therefore overlays the visible calendar control instead of relying
+ * on a synthetic showPicker()/click() hand-off.
+ */
+function timelineDateFocus(card) {
+  if(Number.isFinite(Number(card._timelineFocusTs))) return Number(card._timelineFocusTs);
+  if(Number.isFinite(Number(card._winStart))&&Number.isFinite(Number(card._winEnd))) {
+    return (Number(card._winStart)+Number(card._winEnd))/2;
+  }
+  return Date.now()/1000;
+}
+
+const timelineCalendarMethods = {
+  _prepareTimelineNativeDateInput(input) {
+    if(!input) return null;
+    const focus=timelineDateFocus(this);
+    input.value=localDateValue(focus);
+    input.max=localDateValue();
+    this._updateTimelineDateLabel(focus);
+    return input;
   },
 
+  _ensureTimelineNativeDateInput() {
+    const root=this.shadowRoot;
+    if(!root?.querySelector) return null;
+    const existing=root.querySelector('#timeline-native-date');
+    if(existing) return existing;
+
+    const oldButton=root.querySelector('#cal-btn');
+    if(!oldButton?.parentNode) return null;
+
+    const host=document.createElement('span');
+    host.id='cal-btn';
+    host.className=oldButton.className||'tool';
+    host.title=oldButton.title||'Calendar';
+    host.style.position='relative';
+    host.style.gap='6px';
+    host.style.whiteSpace='nowrap';
+    host.style.overflow='visible';
+    host.innerHTML=oldButton.innerHTML;
+
+    const label=document.createElement('span');
+    label.className='timeline-date-label';
+    label.setAttribute('aria-hidden','true');
+    label.style.cssText='display:none;pointer-events:none;white-space:nowrap;font:650 11px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;font-variant-numeric:tabular-nums;letter-spacing:-.01em;';
+
+    const input=document.createElement('input');
+    input.id='timeline-native-date';
+    input.type='date';
+    input.setAttribute('aria-label','Timeline date');
+    input.style.cssText='position:absolute;inset:0;width:100%;height:100%;min-width:100%;min-height:100%;opacity:0;pointer-events:auto;cursor:pointer;border:0;padding:0;margin:0;z-index:5;background:transparent;color:transparent;font-size:16px;';
+
+    const prepare=()=>this._prepareTimelineNativeDateInput(input);
+    input.addEventListener('pointerdown',prepare,{capture:true,passive:true});
+    input.addEventListener('touchstart',prepare,{capture:true,passive:true});
+    input.addEventListener('focus',prepare,{passive:true});
+    input.addEventListener('click',(event)=>event.stopPropagation());
+    input.addEventListener('change',(event)=>{
+      event.stopPropagation();
+      if(input.value) this._pickDay(input.value);
+      try { input.blur(); } catch(_) {}
+    });
+
+    host.appendChild(label);
+    host.appendChild(input);
+    oldButton.parentNode.replaceChild(host,oldButton);
+    this._prepareTimelineNativeDateInput(input);
+    return input;
+  },
+
+  /** Update the compact historical-date badge beside the calendar icon. */
+  _updateTimelineDateLabel(value=null) {
+    const host=this.shadowRoot?.querySelector?.('#cal-btn');
+    const input=this.shadowRoot?.querySelector?.('#timeline-native-date');
+    if(!host||!input) return;
+
+    const explicit=typeof value==='string'?parseLocalDateInput(value)?.value:null;
+    const timestamp=Number(value);
+    const selected=explicit
+      || (Number.isFinite(timestamp)?localDateValue(timestamp):null)
+      || (Number.isFinite(Number(this._timelineFocusTs))?localDateValue(this._timelineFocusTs):null)
+      || parseLocalDateInput(input.value)?.value
+      || localDateValue();
+    const isToday=selected===localDateValue();
+    const parsed=parseLocalDateInput(selected);
+    const shortLabel=isToday?'':formatLocalDateInput(selected,parsed?.year!==new Date().getFullYear());
+    const fullLabel=isToday?'Today':formatLocalDateInput(selected,true);
+    const label=host.querySelector?.('.timeline-date-label');
+
+    if(label) {
+      label.textContent=shortLabel;
+      label.style.display=isToday?'none':'inline-block';
+    }
+    host.classList?.toggle?.('has-date-label',!isToday);
+    host.title=`Calendar · ${fullLabel}`;
+    input.setAttribute('aria-label',`Timeline date, ${fullLabel}`);
+  },
+
+  _toggleCal() {
+    const legacyPanel=this.shadowRoot?.querySelector?.('#cal-panel');
+    if(legacyPanel) legacyPanel.style.display='none';
+    const input=this._ensureTimelineNativeDateInput();
+    if(!input) return;
+    this._prepareTimelineNativeDateInput(input);
+
+    // Direct pointer/touch interaction normally opens the native picker. This
+    // path is retained for keyboard/desktop activation of the visible host.
+    try {
+      if(typeof input.showPicker==='function') input.showPicker();
+      else input.click();
+    } catch(_) {
+      try { input.click(); } catch(_) {}
+    }
+  },
+};
+
+// ── src/card/timeline/interaction.js ──
+/**
+ * Timeline pointer, touch, wheel and event-preview gesture handling.
+ *
+ * All high-frequency input paths converge on the same viewport and seek state,
+ * which keeps desktop, touch and iOS behavior synchronized.
+ */
+const timelineGestureMethods = {
 _invalidatePlaybackForTimelineMove() {
     this._cancelActivePlayback();
     ++this._playSeq;
@@ -7847,7 +8510,7 @@ _wireScrub() {
       if(!Number.isFinite(t)) return;
       // Do not rebuild the timeline while a pointer is captured. Replacing the
       // boundary DOM node mid-drag is what made iOS intermittently lose the
-      // active finger in v2.0.28. Update only positions/text in place.
+      // active finger during range dragging. Update only positions/text in place.
       this._syncDownloadRangePickerDOM(rangeDrag);
       const nowMs=performance.now();
       if(nowMs-rangeLastLabel>75){rangeLastLabel=nowMs;this._updateTimelineScrubLabel(t);}
@@ -8182,9 +8845,135 @@ _wireScrub() {
       clearTimeout(this._wt);this._wt=setTimeout(()=>{ this._timelineInteracting=false; this._renderTimeline(); const latest=this._scrubTarget ?? this._timelineFocusTs ?? this._winEnd; if(this._isAtLiveEdge(latest)){ this._refreshLiveFromTimeline(); return; } this._seekTimelineTarget(latest); },220);
       this._scheduleTimelineDataLoad();
     },{passive:false});
+
+    this._wireDesktopEventTimelineDrag(track,signal);
     this._renderTimelineZoomLabel();
   },
 
+  /**
+   * Allow desktop users to begin a timeline pan on top of an event preview.
+   *
+   * A short movement threshold preserves the event's normal click behavior;
+   * once the pointer moves far enough, ownership transfers to the timeline and
+   * the release commits through the same seek path used by every other scrub.
+   */
+  _wireDesktopEventTimelineDrag(track,signal) {
+    let gesture=null;
+    const options=signal?{signal}:undefined;
+    const isEventSurface=(target)=>Boolean(
+      target?.closest?.('.t-preview,.t-ev')
+      && !target.closest('button,a,input,select,textarea,.tl-zoom-controls,.tl-playhead i')
+    );
+
+    const finish=(event,cancelled=false)=>{
+      if(!gesture || (event?.pointerId!=null && event.pointerId!==gesture.pointerId)) return;
+      const state=gesture;
+      gesture=null;
+      try {
+        if(track.hasPointerCapture?.(state.pointerId)) track.releasePointerCapture(state.pointerId);
+      } catch(_) {}
+      if(!state.moved) return;
+
+      this._timelineInteracting=false;
+      this._scrubGestureInvalidated=false;
+      track.classList?.remove?.('grab');
+      this._timelineSuppressClickUntil=performance.now()+400;
+
+      const target=this._scrubTarget??this._timelineFocusTs??this._winEnd;
+      const crossedLive=this._timelineLiveCrossed||this._isAtLiveEdge(target);
+      this._timelineLiveCrossed=false;
+      this._timelineWasLiveBeforeGesture=false;
+
+      if(cancelled) {
+        this._renderTimeline();
+        return;
+      }
+      if(crossedLive) this._refreshLiveFromTimeline({restart:!state.wasLive});
+      else this._seekTimelineTarget(target);
+      this._scheduleTimelineDataLoad();
+    };
+
+    track.addEventListener('pointerdown',(event)=>{
+      if(event.pointerType!=='mouse'||event.button!==0||this._downloadRange||!isEventSurface(event.target)) return;
+      gesture={
+        pointerId:event.pointerId,
+        startX:event.clientX,
+        startY:event.clientY,
+        windowStart:Number(this._winStart),
+        windowEnd:Number(this._winEnd),
+        focus:Number.isFinite(Number(this._timelineFocusTs))
+          ? Number(this._timelineFocusTs)
+          : (Number(this._winStart)+Number(this._winEnd))/2,
+        wasLive:this._timelineFollowingLive===true,
+        moved:false,
+      };
+      try { track.setPointerCapture?.(event.pointerId); } catch(_) {}
+    },options);
+
+    track.addEventListener('pointermove',(event)=>{
+      if(!gesture||event.pointerId!==gesture.pointerId) return;
+      const distance=Math.hypot(event.clientX-gesture.startX,event.clientY-gesture.startY);
+      if(!gesture.moved&&distance<4) return;
+
+      if(!gesture.moved) {
+        gesture.moved=true;
+        this._timelineInteracting=true;
+        this._timelineWasLiveBeforeGesture=gesture.wasLive;
+        this._timelineFollowingLive=false;
+        this._timelineLiveCrossed=false;
+        this._scrubGestureInvalidated=true;
+        if(this._playing||this._activePlaybackCleanup) this._invalidatePlaybackForTimelineMove();
+        track.classList?.add?.('grab');
+      }
+
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      const rect=track.getBoundingClientRect();
+      const height=Math.max(1,track.clientHeight||rect.height||1);
+      const span=Math.max(1,gesture.windowEnd-gesture.windowStart);
+      const pan=Math.round((event.clientY-gesture.startY)/height*span);
+      let start=gesture.windowStart+pan;
+      let end=gesture.windowEnd+pan;
+      let focus=gesture.focus+pan;
+      const now=Math.floor(Date.now()/1000);
+      const crossedLive=gesture.focus<now-1&&focus>=now-1;
+
+      if(start<0) {
+        focus-=start;
+        end-=start;
+        start=0;
+      }
+      this._winStart=start;
+      this._winEnd=end;
+      this._timelineFocusTs=Math.max(start,Math.min(end,Math.round(focus)));
+      this._exhausted=false;
+      if(crossedLive) {
+        this._timelineLiveCrossed=true;
+        this._scrubTarget=now;
+      } else {
+        this._scrubTarget=this._timelineFocusTs;
+      }
+
+      this._updateTimelineLive();
+      this._renderRange();
+      this._reconcileTimelineDuringMove();
+      this._scheduleTimelineDynamicData('motion');
+      this._updateTimelineScrubLabel(this._scrubTarget);
+    },options);
+
+    track.addEventListener('pointerup',(event)=>finish(event,false),options);
+    track.addEventListener('pointercancel',(event)=>finish(event,true),options);
+    track.addEventListener('lostpointercapture',(event)=>{
+      if(gesture&&event.pointerId===gesture.pointerId) finish(event,false);
+    },options);
+  }
+};
+
+// ── src/card/timeline/runtime.js ──
+/**
+ * Deferred timeline data loading, scroll pagination and status synchronization.
+ */
+const timelineRuntimeMethods = {
 _scheduleTimelineDynamicData(mode='motion') {
     if (!this.isConnected || this._galleryMode || !this._activeCam?.entity) return;
     const isLive=mode==='live';
@@ -8291,69 +9080,204 @@ _setTimelineWindowAround(anchorTs, anchorRatio, span) {
     this._exhausted=false;
   },
 
-_zoomTimeline(factor, anchorTs, anchorRatio) {
-    const oldSpan=Math.max(300,this._winEnd-this._winStart);
-    const nextSpan=Math.max(300,Math.min(86400,Math.round(oldSpan/Number(factor||1))));
-    const hasExplicitAnchor=Number.isFinite(Number(anchorTs));
-    const ratio=Number.isFinite(Number(anchorRatio)) ? Number(anchorRatio) : 0.5;
-    // +/- while following LIVE should change scale without leaving LIVE. Build
-    // the new centered viewport immediately so the next clock tick has nothing
-    // to undo. Pinch/trackpad zoom still uses its explicit pointer anchor.
-    if(this._timelineFollowingLive && !hasExplicitAnchor){
-      const now=Math.floor(Date.now()/1000);
-      const half=nextSpan/2;
-      this._winStart=Math.floor(now-half);
-      this._winEnd=Math.floor(now+half);
-      if(this._winStart<0){this._winEnd-=this._winStart;this._winStart=0;}
-      this._timelineFocusTs=now;
-      this._scrubTarget=now;
-      this._exhausted=false;
-    } else {
-      const anchor=hasExplicitAnchor
-        ? Number(anchorTs)
-        : (this._timelineFocusTs ?? ((this._winStart+this._winEnd)/2));
-      this._setTimelineWindowAround(anchor,ratio,nextSpan);
-      this._scrubTarget=this._timelineFocusTs;
+_wireScroll() {
+
+    const list=this.shadowRoot.querySelector('#list'); if(!list) return;
+    list.addEventListener('scroll',()=>{if(this._loading||this._exhausted)return;if(list.scrollTop+list.clientHeight>=list.scrollHeight-40)this._loadOlder();});
+  },
+
+async _loadOlder() {
+    const before=this._events.length?Math.floor(Math.min(...this._events.map(e=>e.start_time))):this._winStart;
+    this._loading=true; const {clientId,cam}=this._cc();
+    try{
+      const older=await this._ws({type:'frigate/events/get',instance_id:clientId,cameras:[cam],before,limit:50});
+      const arr=Array.isArray(older)?older.filter(o=>!this._events.some(e=>e.id===o.id)):[];
+      if(!arr.length)this._exhausted=true; else{this._events=this._events.concat(arr);this._winStart=Math.min(this._winStart,...arr.map(e=>e.start_time));this._mergeLoadedFilterMetadata(this._cc(),arr,[]);}
+    }catch(_){}
+    this._loading=false; this._renderList();this._renderTimeline();this._renderRange();
+  },
+
+_syncStatus() {
+    const ent=this._hass?.states?.[this._activeCam?.entity]; if(!ent) return;
+    const dot=this._$('#on-dot'),lbl=this._$('#on-lbl'),title=this._$('#info-title');
+    const ok=!this._cameraIsOffline();
+    if(dot) dot.style.color=ok?'var(--c-on)':'var(--c-danger)';
+    if(lbl) lbl.textContent=ok?'Online':'Offline';
+    const tlOffline=this._$('#tl-track')?.querySelector('.tl-offline'); if(tlOffline) tlOffline.style.display=ok?'none':'flex';
+    if(title) {
+      const c=this._activeCam; const n=cap(camDisplayName(c)||'Camera');
+      title.textContent=n;
     }
-    this._timelineZoom=Math.max(this._timelineZoomMin,Math.min(this._timelineZoomMax,3600/nextSpan));
-    this._renderTimeline(); this._renderRange(); this._renderTimelineZoomLabel();
+  },
+
+_$(sel) { return this._domCache[sel] || (this._domCache[sel] = this.shadowRoot.querySelector(sel)); }
+};
+
+// ── src/card/timeline/zoom.js ──
+/**
+ * Timeline zoom window calculations and visible scale labels.
+ *
+ * The +/- controls intentionally use a small, predictable ladder instead of
+ * multiplying the current window by an arbitrary factor. Pinch/trackpad zoom
+ * still passes an explicit anchor and therefore preserves pointer-centered
+ * behavior.
+ */
+
+const TIMELINE_SCALE_SECONDS = Object.freeze([
+  60,
+  5 * 60,
+  10 * 60,
+  30 * 60,
+  45 * 60,
+  60 * 60,
+  3 * 60 * 60,
+  6 * 60 * 60,
+  12 * 60 * 60,
+  24 * 60 * 60,
+]);
+
+const TIMELINE_SCALE_LABELS = new Map([
+  [60, '1m'],
+  [300, '5m'],
+  [600, '10m'],
+  [1800, '30m'],
+  [2700, '45m'],
+  [3600, '1h'],
+  [10800, '3h'],
+  [21600, '6h'],
+  [43200, '12h'],
+  [86400, '24h'],
+]);
+
+function timelineScaleStep(currentSpan, direction) {
+  const current = Math.max(1, Number(currentSpan) || 10 * 60);
+
+  if (direction === 'in') {
+    for (let i = TIMELINE_SCALE_SECONDS.length - 1; i >= 0; i -= 1) {
+      if (TIMELINE_SCALE_SECONDS[i] < current - 1) return TIMELINE_SCALE_SECONDS[i];
+    }
+    return TIMELINE_SCALE_SECONDS[0];
+  }
+
+  for (const span of TIMELINE_SCALE_SECONDS) {
+    if (span > current + 1) return span;
+  }
+  return TIMELINE_SCALE_SECONDS.at(-1);
+}
+
+function timelineScaleLabel(spanSeconds) {
+  const span = Math.max(1, Math.round(Number(spanSeconds) || 0));
+  const exact = TIMELINE_SCALE_LABELS.get(span);
+  if (exact) return exact;
+  if (span < 3600) return `${Math.max(1, Math.round(span / 60))}m`;
+  const hours = span / 3600;
+  return Number.isInteger(hours) ? `${hours}h` : `${Math.round(hours * 10) / 10}h`;
+}
+
+function applyTimelineScale(card, spanSeconds, anchorTs, anchorRatio) {
+  const span = Math.max(60, Math.min(86400, Math.round(Number(spanSeconds) || 10 * 60)));
+  const hasExplicitAnchor = Number.isFinite(Number(anchorTs));
+  const ratio = Number.isFinite(Number(anchorRatio))
+    ? Math.max(0, Math.min(1, Number(anchorRatio)))
+    : 0.5;
+
+  if (card._timelineFollowingLive && !hasExplicitAnchor) {
+    const now = Math.floor(Date.now() / 1000);
+    card._winStart = Math.max(0, Math.floor(now - span / 2));
+    card._winEnd = card._winStart + span;
+    card._timelineFocusTs = now;
+    card._scrubTarget = now;
+  } else {
+    const anchor = hasExplicitAnchor
+      ? Number(anchorTs)
+      : Number.isFinite(Number(card._timelineFocusTs))
+        ? Number(card._timelineFocusTs)
+        : (Number(card._winStart) + Number(card._winEnd)) / 2;
+
+    let focus = anchor - (0.5 - ratio) * span;
+    let start = Math.floor(focus - span / 2);
+    let end = start + span;
+    const now = Math.floor(Date.now() / 1000);
+
+    // Historical zoom must not create a future-only tail. LIVE +/- uses the
+    // centered branch above, while pointer-anchored zoom stays within now.
+    if (end > now) {
+      const shift = end - now;
+      start -= shift;
+      end -= shift;
+      focus -= shift;
+    }
+    if (start < 0) {
+      focus -= start;
+      end -= start;
+      start = 0;
+    }
+
+    card._winStart = start;
+    card._winEnd = end;
+    card._timelineFocusTs = Math.max(start, Math.min(end, Math.round(focus)));
+    card._scrubTarget = card._timelineFocusTs;
+  }
+
+  card._exhausted = false;
+  card._timelineZoomMax = 60; // 60x corresponds to a one-minute visible window.
+  card._timelineZoom = 3600 / span;
+  return span;
+}
+
+const timelineZoomMethods = {
+  _zoomTimeline(factor, anchorTs, anchorRatio) {
+    const currentSpan = Math.max(1, Number(this._winEnd) - Number(this._winStart));
+    const direction = Number(factor || 1) >= 1 ? 'in' : 'out';
+    const nextSpan = timelineScaleStep(currentSpan, direction);
+
+    applyTimelineScale(this, nextSpan, anchorTs, anchorRatio);
+    this._renderTimeline();
+    this._renderRange();
+    this._renderTimelineZoomLabel();
     this._scheduleTimelineDynamicData('motion');
     this._scheduleTimelineDataLoad();
   },
 
-_resetTimelineZoom() {
-    const span=this._timelineDefaultSpanSeconds();
-    this._timelineZoom=3600/span;
-    if(this._timelineFollowingLive){
-      const now=Math.floor(Date.now()/1000);
-      this._winStart=now-span/2;
-      this._winEnd=now+span/2;
-      this._timelineFocusTs=now;
-      this._scrubTarget=now;
-      this._exhausted=false;
+  _resetTimelineZoom() {
+    const span = this._timelineDefaultSpanSeconds();
+    this._timelineZoom = 3600 / span;
+
+    if (this._timelineFollowingLive) {
+      const now = Math.floor(Date.now() / 1000);
+      this._winStart = now - span / 2;
+      this._winEnd = now + span / 2;
+      this._timelineFocusTs = now;
+      this._scrubTarget = now;
+      this._exhausted = false;
     } else {
-      const anchor=this._timelineFocusTs||this._scrubTarget||((this._winStart+this._winEnd)/2);
-      // Reset around the center playhead, never around the newest edge.
-      this._setTimelineWindowAround(anchor,0.5,span);
-      this._scrubTarget=this._timelineFocusTs;
+      const anchor = this._timelineFocusTs || this._scrubTarget || (this._winStart + this._winEnd) / 2;
+      this._setTimelineWindowAround(anchor, 0.5, span);
+      this._scrubTarget = this._timelineFocusTs;
     }
-    this._renderTimeline(); this._renderRange(); this._renderTimelineZoomLabel();
+
+    this._renderTimeline();
+    this._renderRange();
+    this._renderTimelineZoomLabel();
     this._scheduleTimelineDynamicData('motion');
     this._scheduleTimelineDataLoad();
   },
 
-_renderTimelineZoomLabel() {
-    const el=this._$('#tl-zoom-level'); if(!el) return;
-    const span=Math.round(this._winEnd-this._winStart);
-    let label;
-    if(span>=86400) label='24h';
-    else if(span>=7200) label=Math.round(span/3600)+'h';
-    else if(span>=3600) label='1h';
-    else if(span>=1800) label=Math.round(span/60)+'m';
-    else label=Math.max(5,Math.round(span/60))+'m';
-    el.textContent=label;
+  _renderTimelineZoomLabel() {
+    const element = this._$('#tl-zoom-level');
+    if (!element) return;
+    element.textContent = timelineScaleLabel(Number(this._winEnd) - Number(this._winStart));
   },
+};
 
+// ── src/card/timeline/playback-sync.js ──
+/**
+ * Timeline playhead labels, recorded-media clock synchronization, and seek dispatch.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const timelinePlaybackSyncMethods = {
 _updateTimelineScrubLabel(target) {
     const t=Math.max(0,Math.floor(Number(target)||0));
     if(!Number.isFinite(t)) return;
@@ -8371,6 +9295,7 @@ _updateTimelinePlaybackTime(ts) {
     if(!Number.isFinite(t) || t<0 || !this.isConnected) return;
     this._timelineFocusTs=t;
     this._scrubTarget=t;
+    this._updateTimelineDateLabel?.(t);
     const track=this._$('#tl-track');
     if(!track) return;
     const s=Number(this._winStart), e=Number(this._winEnd);
@@ -8480,93 +9405,34 @@ async _seekTimelineTarget(target) {
 
     await this._showRecording(hour,hour+3600,t);
     if(seq!==this._timelineSeekSeq) return;
-  },
-
-_wireScroll() {
-
-    const list=this.shadowRoot.querySelector('#list'); if(!list) return;
-    list.addEventListener('scroll',()=>{if(this._loading||this._exhausted)return;if(list.scrollTop+list.clientHeight>=list.scrollHeight-40)this._loadOlder();});
-  },
-
-async _loadOlder() {
-    const before=this._events.length?Math.floor(Math.min(...this._events.map(e=>e.start_time))):this._winStart;
-    this._loading=true; const {clientId,cam}=this._cc();
-    try{
-      const older=await this._ws({type:'frigate/events/get',instance_id:clientId,cameras:[cam],before,limit:50});
-      const arr=Array.isArray(older)?older.filter(o=>!this._events.some(e=>e.id===o.id)):[];
-      if(!arr.length)this._exhausted=true; else{this._events=this._events.concat(arr);this._winStart=Math.min(this._winStart,...arr.map(e=>e.start_time));this._mergeLoadedFilterMetadata(this._cc(),arr,[]);}
-    }catch(_){}
-    this._loading=false; this._renderList();this._renderTimeline();this._renderRange();
-  },
-
-_syncStatus() {
-    const ent=this._hass?.states?.[this._activeCam?.entity]; if(!ent) return;
-    const dot=this._$('#on-dot'),lbl=this._$('#on-lbl'),title=this._$('#info-title');
-    const ok=!this._cameraIsOffline();
-    if(dot) dot.style.color=ok?'var(--c-on)':'var(--c-danger)';
-    if(lbl) lbl.textContent=ok?'Online':'Offline';
-    const tlOffline=this._$('#tl-track')?.querySelector('.tl-offline'); if(tlOffline) tlOffline.style.display=ok?'none':'flex';
-    if(title) {
-      const c=this._activeCam; const n=cap(camDisplayName(c)||'Camera');
-      title.textContent=n;
-    }
-  },
-
-_$(sel) { return this._domCache[sel] || (this._domCache[sel] = this.shadowRoot.querySelector(sel)); }
+  }
 };
 
-// ── src/card/timeline-render.js ──
-// Prototype methods grouped by responsibility.
-const timelineRenderMethods = {
-_renderAll() {
-    // A full-card render is especially dangerous while iOS owns a native
-    // date/time picker. Defer it just like gallery/filter paints so no ancestor
-    // text, class, timeline or height mutation can dismiss the system popover.
-    if(this._mediaPickerActive && this._galleryMode){
-      this._mediaPickerPendingGalleryRender=true;
-      return;
-    }
-    this._renderStats();this._renderLatest();this._renderTimeline();this._renderLegend();this._renderRange();this._renderList();this._syncStatus();this._renderCamSwitcher();if(this._cardWidth>=560)this._syncColHeight();
-  },
+// ── src/card/timeline-interaction.js ──
+/**
+ * Public method-group barrel for timelineInteractionMethods.
+ *
+ * Keeping this entry point stable avoids coupling callers to the internal
+ * feature layout while allowing each concern to live in a focused module.
+ */
+const timelineInteractionMethods = Object.assign(
+  {},
+  timelineFilterMethods,
+  timelineCalendarMethods,
+  timelineGestureMethods,
+  timelineRuntimeMethods,
+  timelineZoomMethods,
+  timelinePlaybackSyncMethods,
+);
 
-_renderStats() { const el=this._$('#ev-count'); if(el) el.textContent=String(this._tab==='live'?this._filtered().length:this._allDisplayEvents().length); },
-
-_renderRange() {
-    const el=this._$('#tl-range'); if(!el) return;
-    const span=this._winEnd-this._winStart; const fmt=t=>this._timeMinute(t);
-    if(span<=DAY+60) el.textContent=`${new Date(this._winEnd*1000).toLocaleDateString([],{day:'2-digit',month:'short'})} · ${fmt(this._winStart)}–${this._isNowWindow()?'now':fmt(this._winEnd)}`;
-    else el.textContent=`${new Date(this._winStart*1000).toLocaleDateString([],{day:'2-digit',month:'short'})} – ${this._isNowWindow()?'now':new Date(this._winEnd*1000).toLocaleDateString([],{day:'2-digit',month:'short'})}`;
-  },
-
-_renderLegend() {
-    const el=this._$('#legend'); if(!el) return;
-    if(this._config?.timeline?.show_legend===false){el.innerHTML='';el.style.display='none';return;}
-    el.style.display='';
-    const labels=[...new Set(this._timelineEvents().map(ev=>(ev._tl||this._timelineLabelInfo(ev)).key))].sort();
-    let html=labels.map(l=>`<span class="lg tl-detection-legend"><i>${timelineGlyph(l)}</i>${this._filterDisplayName('label',l)}</span>`).join('');
-    if (this._eventsMode==='all') {
-      this._config.cameras.forEach((c,i)=>{ html+=`<span class="lg"><i style="background:${CAM_COLORS[i%CAM_COLORS.length].replace('.5','1').replace('rgba','rgb').replace(',1)',')')}"></i>${cap(camDisplayName(c))} rec</span>`; });
-    } else {
-      html+=`<span class="lg"><i style="background:${CAM_COLORS[0].replace('.5','1').replace('rgba','rgb').replace(',1)',')')}"></i>Rec</span>`;
-    }
-    el.innerHTML=html;
-  },
-
-_renderLatest() {
-    const row=this._$('#latest-row'); if(!row) return;
-    const events=this._tab==='live'?this._filtered():this._allDisplayEvents();
-    if(!events.length||this._viewMode==='grid'){ row.style.display='none'; return; }
-    row.style.display='block';
-    row.innerHTML=`<div class="latest-label"><span class="section-label">Latest event</span></div>
-      <div class="latest-body">${this._eventCardHTML(events[0],false,true)}</div>`;
-  },
-
-_time(ts) { return this._timeMinute(ts); },
-
-_timelineScaleTime(ts) { return this._timeMinute(ts); },
-
-_timelineTime(ts) { return this._timeSec(ts); },
-
+// ── src/card/timeline/model.js ──
+/**
+ * Timeline event model, clustering, labels, recording gaps, and derived filter metadata.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const timelineModelMethods = {
 _timelineLabelInfo(ev) {
     const raw = this._normalizeObjectLabel(ev?.label ?? ev?.data?.label ?? '').toLowerCase();
     const aliases = {
@@ -8856,6 +9722,28 @@ _timelineRecordingGaps(start, end) {
     return gaps.filter(g=>g.end-g.start>0.5);
   },
 
+_timelineNodeKey(el) {
+    if (el.classList.contains('t-ev')) return `ev:${el.dataset.tick||''}`;
+    if (el.classList.contains('t-preview')) return `preview:${el.dataset.eventId||''}`;
+    if (el.classList.contains('t-rec')) return `rec:${el.dataset.start||''}:${el.dataset.end||''}`;
+    if (el.classList.contains('tl-no-recording')) return `norec:${el.dataset.gap||el.dataset.start||''}`;
+    if (el.classList.contains('tl-scale-mark')) return `scale:${el.dataset.ts||''}`;
+    if (el.classList.contains('tl-live-line')) return 'live-line';
+    if (el.classList.contains('tl-download-range')) return 'download-range';
+    if (el.classList.contains('tl-playhead')) return 'playhead';
+    if (el.classList.contains('tl-offline')) return 'offline';
+    return null;
+  }
+};
+
+// ── src/card/timeline/live-follow.js ──
+/**
+ * LIVE-edge detection, live refresh, and moving timeline-window behavior.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const timelineLiveMethods = {
 _isAtLiveEdge(ts = this._timelineFocusTs) {
     const now = Math.floor(Date.now()/1000);
     return Number.isFinite(Number(ts)) && Number(ts) >= now - 2;
@@ -9022,7 +9910,65 @@ _updateTimelineLive() {
         range.textContent=`${new Date(focus*1000).toLocaleDateString([],{month:'short',day:'2-digit'}).toUpperCase()} · ${this._timeMinute(focus)}`;
       }
     }
+  }
+};
+
+// ── src/card/timeline/render.js ──
+/**
+ * Timeline, legend, summary, scale, and incremental DOM rendering.
+ *
+ * Methods are composed onto SightlineCard.prototype; method names are kept
+ * stable so existing card behavior and tests remain unchanged.
+ */
+const timelineViewMethods = {
+_renderAll() {
+    // A full-card render is especially dangerous while iOS owns a native
+    // date/time picker. Defer it just like gallery/filter paints so no ancestor
+    // text, class, timeline or height mutation can dismiss the system popover.
+    if(this._mediaPickerActive && this._galleryMode){
+      this._mediaPickerPendingGalleryRender=true;
+      return;
+    }
+    this._renderStats();this._renderLatest();this._renderTimeline();this._renderLegend();this._renderRange();this._renderList();this._syncStatus();this._renderCamSwitcher();if(this._cardWidth>=560)this._syncColHeight();
   },
+
+_renderStats() { const el=this._$('#ev-count'); if(el) el.textContent=String(this._tab==='live'?this._filtered().length:this._allDisplayEvents().length); },
+
+_renderRange() {
+    const el=this._$('#tl-range'); if(!el) return;
+    const span=this._winEnd-this._winStart; const fmt=t=>this._timeMinute(t);
+    if(span<=DAY+60) el.textContent=`${new Date(this._winEnd*1000).toLocaleDateString([],{day:'2-digit',month:'short'})} · ${fmt(this._winStart)}–${this._isNowWindow()?'now':fmt(this._winEnd)}`;
+    else el.textContent=`${new Date(this._winStart*1000).toLocaleDateString([],{day:'2-digit',month:'short'})} – ${this._isNowWindow()?'now':new Date(this._winEnd*1000).toLocaleDateString([],{day:'2-digit',month:'short'})}`;
+  },
+
+_renderLegend() {
+    const el=this._$('#legend'); if(!el) return;
+    if(this._config?.timeline?.show_legend===false){el.innerHTML='';el.style.display='none';return;}
+    el.style.display='';
+    const labels=[...new Set(this._timelineEvents().map(ev=>(ev._tl||this._timelineLabelInfo(ev)).key))].sort();
+    let html=labels.map(l=>`<span class="lg tl-detection-legend"><i>${timelineGlyph(l)}</i>${this._filterDisplayName('label',l)}</span>`).join('');
+    if (this._eventsMode==='all') {
+      this._config.cameras.forEach((c,i)=>{ html+=`<span class="lg"><i style="background:${CAM_COLORS[i%CAM_COLORS.length].replace('.5','1').replace('rgba','rgb').replace(',1)',')')}"></i>${cap(camDisplayName(c))} rec</span>`; });
+    } else {
+      html+=`<span class="lg"><i style="background:${CAM_COLORS[0].replace('.5','1').replace('rgba','rgb').replace(',1)',')')}"></i>Rec</span>`;
+    }
+    el.innerHTML=html;
+  },
+
+_renderLatest() {
+    const row=this._$('#latest-row'); if(!row) return;
+    const events=this._tab==='live'?this._filtered():this._allDisplayEvents();
+    if(!events.length||this._viewMode==='grid'){ row.style.display='none'; return; }
+    row.style.display='block';
+    row.innerHTML=`<div class="latest-label"><span class="section-label">Latest event</span></div>
+      <div class="latest-body">${this._eventCardHTML(events[0],false,true)}</div>`;
+  },
+
+_time(ts) { return this._timeMinute(ts); },
+
+_timelineScaleTime(ts) { return this._timeMinute(ts); },
+
+_timelineTime(ts) { return this._timeSec(ts); },
 
 _syncTimelineScaleNodes(track, s, e, span, focus, yPct) {
     const step=span<=900 ? 60 : span<=1800 ? 2*60 : span<=3600 ? 5*60 : span<=7200 ? 10*60 : 30*60;
@@ -9257,19 +10203,6 @@ _renderTimeline(forceFull=false) {
     const labels=this._$('#tl-labels'); if(labels) labels.innerHTML='';
   },
 
-_timelineNodeKey(el) {
-    if (el.classList.contains('t-ev')) return `ev:${el.dataset.tick||''}`;
-    if (el.classList.contains('t-preview')) return `preview:${el.dataset.eventId||''}`;
-    if (el.classList.contains('t-rec')) return `rec:${el.dataset.start||''}:${el.dataset.end||''}`;
-    if (el.classList.contains('tl-no-recording')) return `norec:${el.dataset.gap||el.dataset.start||''}`;
-    if (el.classList.contains('tl-scale-mark')) return `scale:${el.dataset.ts||''}`;
-    if (el.classList.contains('tl-live-line')) return 'live-line';
-    if (el.classList.contains('tl-download-range')) return 'download-range';
-    if (el.classList.contains('tl-playhead')) return 'playhead';
-    if (el.classList.contains('tl-offline')) return 'offline';
-    return null;
-  },
-
 _reconcileTimeline(track, html) {
     const tmp=document.createElement('div');
     tmp.innerHTML=html;
@@ -9284,7 +10217,7 @@ _reconcileTimeline(track, html) {
       const key=this._timelineNodeKey(next);
       let old=key ? oldByKey.get(key) : null;
       // If the semantic element type changed (timeline previews became real
-      // buttons in v2.0.10), replace it once instead of preserving the legacy
+      // buttons in a previous implementation), replace it once instead of preserving the legacy
       // node forever under the same reconciliation key.
       if(old && old.tagName!==next.tagName) { old.remove(); old=null; }
       if(old){
@@ -9319,7 +10252,24 @@ _reconcileTimeline(track, html) {
   }
 };
 
+// ── src/card/timeline-render.js ──
+/**
+ * Public method-group barrel for timelineRenderMethods.
+ *
+ * Keeping this entry point stable avoids coupling callers to the internal
+ * feature layout while allowing each concern to live in a focused module.
+ */
+const timelineRenderMethods = Object.assign(
+  {},
+  timelineModelMethods,
+  timelineLiveMethods,
+  timelineViewMethods,
+);
+
 // ── src/card/lists.js ──
+/**
+ * Event/review list presentation and camera switcher rendering.
+ */
 // Prototype methods grouped by responsibility.
 const listMethods = {
 _favIcon(ev) { return ev.retain_indefinitely?`<button class="ico fav on" data-fav="${ev.id}">${ICONS.star}</button>`:`<button class="ico fav" data-fav="${ev.id}">${ICONS.starO}</button>`; },
@@ -9410,6 +10360,9 @@ _renderReviews(list) {
 };
 
 // ── src/card/download.js ──
+/**
+ * Recording download-range selection, validation and Frigate export requests.
+ */
 // Prototype methods grouped by responsibility.
 const downloadMethods = {
 _formatDownloadRangeDuration(seconds) {
@@ -9527,7 +10480,7 @@ async _downloadRecRange(dlStart, dlEnd) {
     const base = `/api/frigate/${encodeURIComponent(String(clientId))}/recording/${encodeURIComponent(String(cam))}/start/${start}/end/${end}`;
 
     // IMPORTANT: Home Assistant signs both the request path *and* all non-safe
-    // query parameters. v2.0.28 signed `base` and only then appended
+    // query parameters. An older implementation signed `base` and only then appended
     // `download=true`; current HA correctly rejects that as a tampered signed
     // request, causing the 401/error body to be saved with an .mp4 extension.
     // Build the final proxy request first, then sign that exact path.
@@ -9543,8 +10496,11 @@ async _downloadRecRange(dlStart, dlEnd) {
   }
 };
 
-// ── src/card/multi-recording-core.js ──
-const multiRecordingCoreMethods = {
+// ── src/card/multiview/core.js ──
+/**
+ * Shared Multiview recording calculations and per-camera synchronization helpers.
+ */
+const multiviewCoreMethods = {
   _multiRecordingBucket(target) {
     const bucket=15*60;
     const t=Math.max(0,Math.floor(Number(target)||0));
@@ -9602,8 +10558,11 @@ const multiRecordingCoreMethods = {
   }
 };
 
-// ── src/card/multi-recording-player.js ──
-const multiRecordingPlayerMethods = {
+// ── src/card/multiview/player.js ──
+/**
+ * Per-camera Multiview recording player creation and decoder synchronization.
+ */
+const multiviewPlayerMethods = {
   async _multiRecordingAttachPlayer(entry) {
     const session=entry.session;
     if(!session||session!==this._multiPlaybackSession||!entry.recordings.length)return;
@@ -9674,8 +10633,11 @@ const multiRecordingPlayerMethods = {
   }
 };
 
-// ── src/card/multi-recording-controller.js ──
-const multiRecordingControllerMethods = {
+// ── src/card/multiview/controller.js ──
+/**
+ * Multiview recording session lifecycle and synchronized seek dispatch.
+ */
+const multiviewControllerMethods = {
   _cancelMultiRecordingPlayback() {
     const session=this._multiPlaybackSession;
     if(!session)return;
@@ -9795,8 +10757,9 @@ const multiRecordingControllerMethods = {
   }
 };
 
-// ── src/card/multi-recording.js ──
-const timelineUxMethods={
+// ── src/card/multiview/timeline-ui.js ──
+/** Multiview timeline legend, preview geometry, and download-range UI. */
+const multiviewTimelineMethods = {
   _renderLegend() {
     const el=this._$('#legend');
     if(!el)return;
@@ -9824,6 +10787,15 @@ const timelineUxMethods={
   },
 
   _click(e) {
+    // A pointer drag that began on an event thumbnail produces a synthetic
+    // click on release in desktop browsers. Ignore only that short-lived click;
+    // ordinary event and timeline clicks continue through the normal handler.
+    if((this._timelineSuppressClickUntil||0)>performance.now() && e?.target?.closest?.('.t-preview,.t-ev,[data-tick]')) {
+      e.preventDefault?.();
+      e.stopPropagation?.();
+      return;
+    }
+
     const legend=e?.target?.closest?.('[data-legend-label]');
     if(legend){
       e.preventDefault?.();
@@ -9866,6 +10838,7 @@ const timelineUxMethods={
   _renderTimeline(...args) {
     const result=timelineRenderMethods._renderTimeline.apply(this,args);
     this._syncTimelinePreviewGeometry();
+    this._updateTimelineDateLabel?.();
     if(this._downloadRange){
       this._syncDownloadRangePickerDOM();
       this._wireDedicatedDownloadRangeDrag();
@@ -10017,7 +10990,9 @@ const timelineUxMethods={
   }
 };
 
-const mediaBrowserFixMethods={
+// ── src/card/multiview/media-browser.js ──
+/** Aggregate media-browser data and filters across all configured cameras. */
+const multiviewMediaMethods = {
   _mediaFilterValues() {
     const values=browserMethods._mediaFilterValues.call(this);
     if(this._eventsMode==='all'){
@@ -10082,17 +11057,23 @@ const mediaBrowserFixMethods={
   }
 };
 
-const multiRecordingMethods=Object.assign({},multiRecordingCoreMethods,multiRecordingPlayerMethods,multiRecordingControllerMethods,timelineUxMethods,mediaBrowserFixMethods);
+// ── src/card/multiview.js ──
+/**
+ * Multiview behavior composed from focused playback, timeline, and media modules.
+ */
+const multiviewMethods = Object.assign(
+  {},
+  multiviewCoreMethods,
+  multiviewPlayerMethods,
+  multiviewControllerMethods,
+  multiviewTimelineMethods,
+  multiviewMediaMethods,
+);
 
 // ── src/card/responsive-ux.js ──
-function localDateValue(ts) {
-  const d=new Date(Number(ts||Date.now()/1000)*1000);
-  const y=d.getFullYear();
-  const m=String(d.getMonth()+1).padStart(2,'0');
-  const day=String(d.getDate()).padStart(2,'0');
-  return `${y}-${m}-${day}`;
-}
-
+/**
+ * Responsive workspace policy and native timeline date-control integration.
+ */
 function clearStyle(el, prop) {
   try { el?.style?.removeProperty?.(prop); } catch(_) {}
 }
@@ -10102,88 +11083,6 @@ function setImportant(el, prop, value) {
 }
 
 const responsiveUxMethods = {
-  _prepareTimelineNativeDateInput(input) {
-    if(!input) return null;
-    const focus=Number.isFinite(Number(this._timelineFocusTs))
-      ? Number(this._timelineFocusTs)
-      : (Number.isFinite(Number(this._winStart))&&Number.isFinite(Number(this._winEnd))
-        ? (Number(this._winStart)+Number(this._winEnd))/2
-        : Date.now()/1000);
-    input.value=localDateValue(focus);
-    input.max=localDateValue(Date.now()/1000);
-    return input;
-  },
-
-  _ensureTimelineNativeDateInput() {
-    const root=this.shadowRoot;
-    if(!root?.querySelector) return null;
-    let input=root.querySelector('#timeline-native-date');
-    if(input) return input;
-
-    const oldButton=root.querySelector('#cal-btn');
-    if(!oldButton?.parentNode) return null;
-
-    // iOS Safari/WKWebView does not reliably support programmatic showPicker()
-    // for date controls. Replace the visual button with an equivalent non-button
-    // host and put the REAL native date input directly over its full hit target.
-    // The user's finger therefore lands on <input type="date"> itself and
-    // WebKit owns the activation gesture from the beginning.
-    const host=document.createElement('span');
-    host.id='cal-btn';
-    host.className=oldButton.className || 'tool';
-    host.title=oldButton.title || 'Calendar';
-    host.style.position='relative';
-    host.innerHTML=oldButton.innerHTML;
-
-    input=document.createElement('input');
-    input.id='timeline-native-date';
-    input.type='date';
-    input.setAttribute('aria-label','Timeline date');
-    // Keep the native appearance semantics intact. The element is visually
-    // transparent, but it is real, sized, hit-testable, and receives the tap
-    // directly — exactly what iOS needs to present its system date wheel/sheet.
-    input.style.cssText='position:absolute;inset:0;width:100%;height:100%;min-width:100%;min-height:100%;opacity:0;pointer-events:auto;cursor:pointer;border:0;padding:0;margin:0;z-index:5;background:transparent;color:transparent;font-size:16px;';
-
-    const prepare=()=>this._prepareTimelineNativeDateInput(input);
-    // Prepare before WebKit performs the input's native default action. Do not
-    // preventDefault: doing so would suppress the iOS system date picker.
-    input.addEventListener('pointerdown',prepare,{capture:true,passive:true});
-    input.addEventListener('touchstart',prepare,{capture:true,passive:true});
-    input.addEventListener('focus',prepare,{passive:true});
-    // The card has delegated click/change handlers for other controls. Keep the
-    // native input's events from bubbling into #cal-btn and triggering the old
-    // programmatic picker path after iOS has already accepted the direct tap.
-    input.addEventListener('click',e=>e.stopPropagation());
-    input.addEventListener('change',e=>{
-      e.stopPropagation();
-      const value=input.value;
-      if(value) this._pickDay(value);
-      try { input.blur(); } catch(_) {}
-    });
-
-    host.appendChild(input);
-    oldButton.parentNode.replaceChild(host,oldButton);
-    this._prepareTimelineNativeDateInput(input);
-    return input;
-  },
-
-  _toggleCal() {
-    // Normal interaction is direct through the overlaid native input. Keep this
-    // path only as a desktop/keyboard fallback if a synthetic click reaches the
-    // visual host instead of the input itself.
-    const oldPanel=this.shadowRoot?.querySelector?.('#cal-panel');
-    if(oldPanel) oldPanel.style.display='none';
-    const input=this._ensureTimelineNativeDateInput();
-    if(!input) return;
-    this._prepareTimelineNativeDateInput(input);
-    try {
-      if(typeof input.showPicker==='function') input.showPicker();
-      else input.click();
-    } catch(_) {
-      try { input.click(); } catch(_) {}
-    }
-  },
-
   _measureResponsiveCardWidth() {
     const rect=Number(this.getBoundingClientRect?.().width||0);
     const client=Number(this.clientWidth||0);
@@ -10394,279 +11293,213 @@ const responsiveUxMethods = {
   }
 };
 
-// ── src/card/v115.js ──
-const SCALES=[60,300,600,1800,2700,3600,10800,21600,43200,86400];
-const SCALE_LABELS={60:'1m',300:'5m',600:'10m',1800:'30m',2700:'45m',3600:'1h',10800:'3h',21600:'6h',43200:'12h',86400:'24h'};
-const parseDate=value=>{
-  const m=String(value||'').match(/^(\d{4})-(\d{2})-(\d{2})$/); if(!m)return null;
-  const y=+m[1],mo=+m[2],d=+m[3],date=new Date(y,mo-1,d,12);
-  return date.getFullYear()===y&&date.getMonth()===mo-1&&date.getDate()===d?{y,date,value:`${m[1]}-${m[2]}-${m[3]}`}:null;
-};
-const dateValue=ts=>{
-  const d=new Date(Number(ts||Date.now()/1000)*1000),p=n=>String(n).padStart(2,'0');
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
-};
+// ── src/card/ui/playback-layout.js ──
+/**
+ * Full-card playback presentation and return-to-live layout restoration.
+ *
+ * Playback transport remains owned by eventPlaybackMethods. This module only
+ * adapts the surrounding dashboard workspace when media replaces a Multiview
+ * feed, so layout policy is not mixed into decoding or Frigate media logic.
+ */
+const PLAYBACK_BACK_STYLE = [
+  'position:absolute',
+  'left:10px',
+  'top:10px',
+  'z-index:80',
+  'display:inline-flex',
+  'align-items:center',
+  'gap:5px',
+  'min-height:30px',
+  'padding:5px 9px',
+  'border:1px solid rgba(255,255,255,.24)',
+  'border-radius:999px',
+  'background:rgba(16,16,18,.72)',
+  'color:#fff',
+  'font:650 11px/1 -apple-system,BlinkMacSystemFont,system-ui,sans-serif',
+  'box-shadow:0 5px 18px rgba(0,0,0,.30)',
+  'backdrop-filter:blur(16px) saturate(160%)',
+  '-webkit-backdrop-filter:blur(16px) saturate(160%)',
+  'cursor:pointer',
+  'appearance:none',
+  '-webkit-appearance:none',
+].join(';');
 
-const v115Methods={
-  _ensureTimelineNativeDateInput(){
-    const input=responsiveUxMethods._ensureTimelineNativeDateInput.call(this); if(!input)return null;
-    const host=input.parentElement;
-    if(host){
-      Object.assign(host.style,{gap:'6px',whiteSpace:'nowrap',overflow:'visible'});
-      if(!host.querySelector?.('.timeline-date-label')){
-        const label=document.createElement('span');
-        label.className='timeline-date-label'; label.setAttribute('aria-hidden','true');
-        label.style.cssText='display:none;pointer-events:none;white-space:nowrap;font:650 11px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;font-variant-numeric:tabular-nums;letter-spacing:-.01em;';
-        host.insertBefore(label,input);
-      }
-    }
-    this._updateTimelineDateLabel();
-    return input;
-  },
+function queryPlaybackWorkspace(card) {
+  const query=(selector)=>card.shadowRoot?.querySelector?.(selector);
+  return {
+    card: query('.card'),
+    feed: query('.workspace-feed'),
+    timeline: query('.workspace-timeline'),
+    media: query('.workspace-media'),
+    layout: query('.layout'),
+    engine: query('#eng-wrap'),
+    grid: query('#cam-grid'),
+  };
+}
 
-  _prepareTimelineNativeDateInput(input){
-    const out=responsiveUxMethods._prepareTimelineNativeDateInput.call(this,input);
-    this._updateTimelineDateLabel();
-    return out;
-  },
+function saveStyle(element,key,property) {
+  if(!element) return;
+  element.dataset[key]=element.style.getPropertyValue(property)||'';
+}
 
-  _updateTimelineDateLabel(value=null){
-    const root=this.shadowRoot,host=root?.querySelector?.('#cal-btn'),input=root?.querySelector?.('#timeline-native-date');
-    if(!host||!input)return;
-    const parsedString=typeof value==='string'?parseDate(value):null;
-    const ds=parsedString?.value || (Number.isFinite(Number(value))?dateValue(value):Number.isFinite(Number(this._timelineFocusTs))?dateValue(this._timelineFocusTs):parseDate(input.value)?.value||dateValue());
-    const today=dateValue(),isToday=ds===today,parsed=parseDate(ds);
-    const fmt=year=>parsed?.date.toLocaleDateString([],{month:'short',day:'numeric',...(year?{year:'numeric'}:{})})||'';
-    const short=isToday?'':fmt(parsed?.y!==new Date().getFullYear()),full=isToday?'Today':fmt(true),label=host.querySelector?.('.timeline-date-label');
-    if(label){label.textContent=short;label.style.display=isToday?'none':'inline-block';}
-    host.classList?.toggle?.('has-date-label',!isToday); host.title=`Calendar · ${full}`;
-    input.setAttribute('aria-label',`Timeline date, ${full}`);
-  },
+function restoreStyle(element,key,property) {
+  if(!element||!(key in element.dataset)) return;
+  const value=element.dataset[key];
+  if(value) element.style.setProperty(property,value);
+  else element.style.removeProperty(property);
+  delete element.dataset[key];
+}
 
-  async _pickDay(ds){
-    const parsed=parseDate(ds); if(!parsed)return actionMethods._pickDay.call(this,ds);
-    actionMethods._pickDay.call(this,parsed.value); this._updateTimelineDateLabel(parsed.value);
-    const target=Number(this._timelineFocusTs);
-    if(Number.isFinite(target)&&typeof this._seekTimelineTarget==='function'){
-      this._scrubTarget=target;
-      try{await this._seekTimelineTarget(target);}catch(err){console.warn('[Sightline] timeline calendar seek failed',err);}
-    }
-  },
-
-  _updateTimelinePlaybackTime(ts){
-    const out=timelineInteractionMethods._updateTimelinePlaybackTime.call(this,ts);
-    this._updateTimelineDateLabel(ts); return out;
-  },
-
-  async _refreshMicrophoneAvailability(){
-    const media=navigator.mediaDevices,supported=!!(this._config?.two_way_audio&&media?.getUserMedia);
-    let present=supported;
-    if(supported&&media?.enumerateDevices){try{const devices=await media.enumerateDevices();if(devices?.some?.(d=>d?.kind==='audioinput'))present=true;}catch(_){present=true;}}
-    const changed=this._microphonePresent!==present; this._microphonePresent=present;
-    if(!present&&this._talkSpeaking)try{await this._stopTalk();}catch(_){}
-    if(changed&&this.isConnected)this._renderStreamCtrl();
-    return present;
-  },
-
-  _renderStreamCtrl(){
-    const out=liveMethods._renderStreamCtrl.call(this),bar=this.shadowRoot?.querySelector?.('#stream-ctrl-bar');
-    if(!bar)return out;
-    const video=this._go2rtcLive?.video,hasAudio=!!(this._liveAudioAvailable||this._go2rtcLive?.stream?.getAudioTracks?.().length),live=!this._playing&&this.shadowRoot.querySelector('#viewer')?.style.display!=='flex';
-    if(live&&this._viewMode!=='grid'&&video&&hasAudio){
-      const b=document.createElement('button'); b.type='button'; b.id='sc-audio';
-      b.className=`scb-btn audio-btn${this._liveAudioEnabled?' active':''}`; b.innerHTML=this._liveAudioEnabled?ICONS.volOn:ICONS.volOff;
-      b.title=this._liveAudioEnabled?'Mute live audio':'Unmute live audio'; b.setAttribute('aria-label',b.title); b.setAttribute('aria-pressed',String(!!this._liveAudioEnabled));
-      bar.insertBefore(b,bar.firstChild);
-    }
-    return out;
-  },
-
-  _zoomTimeline(factor,anchorTs,anchorRatio){
-    const old=Math.max(1,Number(this._winEnd)-Number(this._winStart)),zoomIn=Number(factor||1)>=1;
-    let next=zoomIn?SCALES[0]:SCALES.at(-1);
-    if(zoomIn){for(let i=SCALES.length-1;i>=0;i--)if(SCALES[i]<old-1){next=SCALES[i];break;}}
-    else for(const span of SCALES)if(span>old+1){next=span;break;}
-    const span=Math.max(60,Math.min(86400,next)),explicit=Number.isFinite(Number(anchorTs)),ratio=Number.isFinite(Number(anchorRatio))?Math.max(0,Math.min(1,Number(anchorRatio))):.5;
-    if(this._timelineFollowingLive&&!explicit){
-      const now=Math.floor(Date.now()/1000); this._winStart=Math.max(0,Math.floor(now-span/2)); this._winEnd=this._winStart+span; this._timelineFocusTs=this._scrubTarget=now;
-    }else{
-      const anchor=explicit?Number(anchorTs):Number.isFinite(Number(this._timelineFocusTs))?Number(this._timelineFocusTs):(Number(this._winStart)+Number(this._winEnd))/2;
-      let focus=anchor-(.5-ratio)*span,start=Math.floor(focus-span/2),end=start+span,now=Math.floor(Date.now()/1000);
-      if(end>now){const shift=end-now;start-=shift;end-=shift;focus-=shift;}
-      if(start<0){focus-=start;end-=start;start=0;}
-      this._winStart=start;this._winEnd=end;this._timelineFocusTs=Math.max(start,Math.min(end,Math.round(focus)));this._scrubTarget=this._timelineFocusTs;
-    }
-    this._exhausted=false; this._timelineZoomMax=60; this._timelineZoom=3600/span;
-    this._renderTimeline(); this._renderRange(); this._renderTimelineZoomLabel(); this._scheduleTimelineDynamicData('motion'); this._scheduleTimelineDataLoad();
-  },
-
-  _renderTimelineZoomLabel(){
-    const el=this._$('#tl-zoom-level'); if(!el)return;
-    const span=Math.max(1,Math.round(Number(this._winEnd)-Number(this._winStart)));
-    el.textContent=SCALE_LABELS[span]||(span<3600?`${Math.max(1,Math.round(span/60))}m`:`${Math.round(span/360)/10}h`);
-  },
-
-  _wireScrub(){
-    timelineInteractionMethods._wireScrub.call(this);
-    const track=this.shadowRoot?.querySelector?.('#tl-track'),signal=this._scrubAbort?.signal; if(!track)return;
-    let drag=null; const opts=signal?{signal}:undefined;
-    const finish=(e,cancel=false)=>{
-      if(!drag||(e?.pointerId!=null&&e.pointerId!==drag.id))return;
-      const state=drag;drag=null;try{if(track.hasPointerCapture?.(state.id))track.releasePointerCapture(state.id);}catch(_){}
-      if(!state.moved)return;
-      this._timelineInteracting=false;this._scrubGestureInvalidated=false;track.classList?.remove?.('grab');this._timelineSuppressClickUntil=performance.now()+400;
-      const target=this._scrubTarget??this._timelineFocusTs??this._winEnd,crossed=this._timelineLiveCrossed||this._isAtLiveEdge(target),wasLive=state.wasLive;
-      this._timelineLiveCrossed=this._timelineWasLiveBeforeGesture=false;
-      if(cancel)this._renderTimeline();else{crossed?this._refreshLiveFromTimeline({restart:!wasLive}):this._seekTimelineTarget(target);this._scheduleTimelineDataLoad();}
-    };
-    track.addEventListener('pointerdown',e=>{
-      if(e.pointerType!=='mouse'||e.button!==0||this._downloadRange||!e.target?.closest?.('.t-preview,.t-ev')||e.target.closest('button,a,input,select,textarea,.tl-zoom-controls,.tl-playhead i'))return;
-      drag={id:e.pointerId,x:e.clientX,y:e.clientY,start:+this._winStart,end:+this._winEnd,focus:Number.isFinite(+this._timelineFocusTs)?+this._timelineFocusTs:(+this._winStart+ +this._winEnd)/2,wasLive:this._timelineFollowingLive===true,moved:false};
-      try{track.setPointerCapture?.(e.pointerId);}catch(_){}
-    },opts);
-    track.addEventListener('pointermove',e=>{
-      if(!drag||e.pointerId!==drag.id)return;
-      if(!drag.moved&&Math.hypot(e.clientX-drag.x,e.clientY-drag.y)<4)return;
-      if(!drag.moved){drag.moved=true;this._timelineInteracting=true;this._timelineWasLiveBeforeGesture=drag.wasLive;this._timelineFollowingLive=this._timelineLiveCrossed=false;this._scrubGestureInvalidated=true;if(this._playing||this._activePlaybackCleanup)this._invalidatePlaybackForTimelineMove();track.classList?.add?.('grab');}
-      e.preventDefault?.();e.stopPropagation?.();
-      const size=Math.max(1,track.clientHeight||track.getBoundingClientRect().height||1),span=Math.max(1,drag.end-drag.start),pan=Math.round((e.clientY-drag.y)/size*span);
-      let start=drag.start+pan,end=drag.end+pan,focus=drag.focus+pan; const now=Math.floor(Date.now()/1000),crossed=drag.focus<now-1&&focus>=now-1;
-      if(start<0){focus-=start;end-=start;start=0;}
-      this._winStart=start;this._winEnd=end;this._timelineFocusTs=Math.max(start,Math.min(end,Math.round(focus)));this._exhausted=false;
-      if(crossed){this._timelineLiveCrossed=true;this._scrubTarget=now;}else this._scrubTarget=this._timelineFocusTs;
-      this._updateTimelineLive();this._renderRange();this._reconcileTimelineDuringMove();this._scheduleTimelineDynamicData('motion');this._updateTimelineScrubLabel(this._scrubTarget);
-    },opts);
-    track.addEventListener('pointerup',e=>finish(e),opts);track.addEventListener('pointercancel',e=>finish(e,true),opts);track.addEventListener('lostpointercapture',e=>{if(drag&&e.pointerId===drag.id)finish(e);},opts);
-  },
-
-  _click(event){
-    if(event?.target?.closest?.('[data-legend-label]'))return multiRecordingMethods._click.call(this,event);
-    if(event?.target?.closest?.('#sc-audio')){
-      event.preventDefault?.();event.stopPropagation?.();
-      const video=this._go2rtcLive?.video||this._findVideo?.(this._engine); if(!video)return;
-      this._liveAudioEnabled=!this._liveAudioEnabled;
-      try{video.muted=!this._liveAudioEnabled;video.volume=1;if(this._liveAudioEnabled){video.setAttribute?.('playsinline','');video.play?.()?.catch?.(()=>{});}}catch(_){}
-      return this._renderStreamCtrl();
-    }
-    if((this._timelineSuppressClickUntil||0)>performance.now()&&event?.target?.closest?.('.t-preview,.t-ev,[data-tick]')){event.preventDefault?.();event.stopPropagation?.();return;}
-    return browserMethods._click.call(this,event);
-  },
-
-  _renderTimeline(...args){
-    const out=multiRecordingMethods._renderTimeline.apply(this,args);this._updateTimelineDateLabel();return out;
+function showPlaybackReturnButton(card,engine,returnToGrid) {
+  if(!engine) return;
+  let button=engine.querySelector('#playback-back-live');
+  if(!button) {
+    button=document.createElement('button');
+    button.type='button';
+    button.id='playback-back-live';
+    button.style.cssText=PLAYBACK_BACK_STYLE;
+    engine.appendChild(button);
   }
+  const label=returnToGrid?'Back to Multiview':'Back to Live';
+  button.hidden=false;
+  button.style.display='inline-flex';
+  button.innerHTML=`${ICONS.back}<span>${label}</span>`;
+  button.title=label;
+  button.setAttribute('aria-label',label);
+  button.onclick=()=>card._showLive();
+  const icon=button.querySelector('svg');
+  if(icon) {
+    icon.style.width='13px';
+    icon.style.height='13px';
+  }
+}
+
+const playbackLayoutMethods = {
+  _enter(...args) {
+    const returnToGrid=this._viewMode==='grid';
+    if(returnToGrid&&!this._playbackReturnViewMode) this._playbackReturnViewMode='grid';
+    const result=eventPlaybackMethods._enter.apply(this,args);
+    const workspace=queryPlaybackWorkspace(this);
+
+    if(returnToGrid) {
+      workspace.card?.classList.add('playback-fullcard');
+      saveStyle(workspace.layout,'playbackGridColumns','grid-template-columns');
+      saveStyle(workspace.layout,'playbackGridAreas','grid-template-areas');
+      saveStyle(workspace.feed,'playbackGridColumn','grid-column');
+      saveStyle(workspace.feed,'playbackGridRow','grid-row');
+      saveStyle(workspace.timeline,'playbackDisplay','display');
+      saveStyle(workspace.media,'playbackDisplay','display');
+      saveStyle(workspace.engine,'playbackDisplay','display');
+      saveStyle(workspace.engine,'playbackWidth','width');
+      saveStyle(workspace.engine,'playbackMaxWidth','max-width');
+      saveStyle(workspace.grid,'playbackDisplay','display');
+
+      workspace.layout?.style.setProperty('grid-template-columns','minmax(0, 1fr)','important');
+      workspace.layout?.style.setProperty('grid-template-areas','"feed"','important');
+      workspace.feed?.style.setProperty('grid-column','1 / -1','important');
+      workspace.feed?.style.setProperty('grid-row','1','important');
+      workspace.timeline?.style.setProperty('display','none','important');
+      workspace.media?.style.setProperty('display','none','important');
+      workspace.engine?.style.setProperty('display','block','important');
+      workspace.engine?.style.setProperty('width','100%','important');
+      workspace.engine?.style.setProperty('max-width','none','important');
+      workspace.grid?.style.setProperty('display','none','important');
+    }
+
+    showPlaybackReturnButton(this,workspace.engine,returnToGrid);
+    return result;
+  },
+
+  _showLive(...args) {
+    const returnToGrid=this._playbackReturnViewMode==='grid';
+    const result=eventPlaybackMethods._showLive.apply(this,args);
+    this._playbackReturnViewMode=null;
+    const workspace=queryPlaybackWorkspace(this);
+    const back=workspace.engine?.querySelector('#playback-back-live');
+
+    if(back) {
+      back.hidden=true;
+      back.style.display='none';
+    }
+    workspace.card?.classList.remove('playback-fullcard');
+    restoreStyle(workspace.layout,'playbackGridColumns','grid-template-columns');
+    restoreStyle(workspace.layout,'playbackGridAreas','grid-template-areas');
+    restoreStyle(workspace.feed,'playbackGridColumn','grid-column');
+    restoreStyle(workspace.feed,'playbackGridRow','grid-row');
+    restoreStyle(workspace.timeline,'playbackDisplay','display');
+    restoreStyle(workspace.media,'playbackDisplay','display');
+    restoreStyle(workspace.engine,'playbackDisplay','display');
+    restoreStyle(workspace.engine,'playbackWidth','width');
+    restoreStyle(workspace.engine,'playbackMaxWidth','max-width');
+    restoreStyle(workspace.grid,'playbackDisplay','display');
+
+    if(returnToGrid) {
+      if(workspace.engine) workspace.engine.style.display='none';
+      if(workspace.grid) workspace.grid.style.display='';
+      this._eventsMode='all';
+      this._mountGrid();
+      this._renderCamSwitcher();
+    }
+    this._syncResponsiveWorkspace?.();
+    return result;
+  },
 };
 
 // ── src/card/SightlineCard.js ──
+/**
+ * Sightline custom-card element and behavior composition root.
+ *
+ * Feature modules expose method groups instead of mutating the prototype at
+ * import time. The order below is intentional: base capabilities are composed
+ * first, then cross-camera/responsive UI adaptations, and finally playback
+ * layout policy where an override is required.
+ */
 class SightlineCard extends HTMLElement {
-constructor() {
+  constructor() {
     super();
-    this.attachShadow({ mode:'open' });
-    this._hass = null; this._config = null; this._started = false;
-    this._activeCamIdx = 0; this._camCache = {}; this._viewMode = 'single'; this._eventsMode = 'camera';
-    this._events = []; this._recordings = []; this._recordingsLoaded = false; this._recordingsRangeStart = null; this._recordingsRangeEnd = null; this._reviews = []; this._kept = [];
-    this._tab = 'live'; this._playing = null; this._initialMediaStateApplied = false; this._playbackReturnViewMode = null;
-    this._browseOpen = false; this._winEnd = 0; this._winStart = 0; this._timelineSelected = null; this._timelineFocusTs = null;
-    this._loading = false; this._exhausted = false; this._daysWithActivity = new Set();
-    this._filterLabel = 'all'; this._filterFace = 'all'; this._filterZone = 'all'; this._favOnly = false; this._calMonth = null;
-    this._engine = null; this._unsub = null; this._rotateTimer = null; this._cardWidth = 0; this._playSeq = 0; this._playingHour = null;
-    this._timelineLoadSeq = 0; this._timelineDataSeq = 0; this._timelineDynamicTimer = null; this._timelineDynamicTimerMode = ''; this._timelineDynamicActive = false; this._timelineDynamicPending = false; this._timelineDynamicLastAt = 0;
-    this._recordingsLoadedAt = 0; this._timelineSeekSeq = 0; this._playbackLoadSeq = 0; this._playbackTimer = null; this._scrubAbort = null; this._scrollAbort = null; this._scrubTarget = null;
-    this._timelineZoom = 6; this._timelineZoomMin = 1/24; this._timelineZoomMax = 12; this._activePlaybackCleanup = null; this._playbackSession = null;
-    this._streamMuted = true; this._showReviewed = false;
-    this._mediaFilter = { camera:'all', label:'all', face:'all', zone:'all', favorites:false, reviewed:'all', severity:'all', duration:'all', date:'all', timeStart:'', timeEnd:'' };
-    this._mediaPickerApplyTimer = null; this._mediaPickerReleaseTimer = null; this._mediaPickerActive = false; this._mediaPickerActiveId = ''; this._mediaPickerPendingFilterRender = false; this._mediaPickerPendingGalleryRender = false;
-    this._liveFsMirror = null; this._liveFsRecoverySeq = 0; this._downloadRange = null; this._recordingBrowse = []; this._domCache = {}; this._clickListenerBound = false; this._mediaImageListenerBound = false; this._livePseudoFullscreen = false;
-    this._timelineThumbCache = new Map(); this._timelineEventCache = new Map(); this._timelineDataDirty = false;
-    this._talkActive = false; this._talkPC = null; this._talkWS = null; this._talkMic = null; this._talkAudio = null; this._talkUsingLivePC = false; this._talkMicReadyPromise = null; this._go2rtcMountPromise = null;
-    this._micDesiredMute = true; this._micForbidden = false; this._microphonePresent = null; this._micDeviceChangeHandler = null; this._micDisconnectTimer = null;
-    this._go2rtcLive = null; this._rtcDebug = { answer: '', candidates: [], tracks: [], errors: [] }; this._liveAudioEnabled = false; this._liveAudioAvailable = false;
+    this.attachShadow({ mode: 'open' });
+    initializeCardState(this);
   }
-static getConfigElement() { return document.createElement(CARD_TAG+'-editor'); }
-static getStubConfig() { return { camera_entity:'camera.front_door' }; }
+
+  static getConfigElement() {
+    return document.createElement(`${CARD_TAG}-editor`);
+  }
+
+  static getStubConfig() {
+    return { camera_entity: 'camera.front_door' };
+  }
 }
 
-applyMethodGroups(SightlineCard.prototype, coreMethods, liveMethods, talkMethods, dataMethods, renderShellMethods, layoutMethods, browserMethods, eventPlaybackMethods, recordingPlaybackMethods, actionMethods, timelineInteractionMethods, timelineRenderMethods, listMethods, downloadMethods);
+applyMethodGroups(
+  SightlineCard.prototype,
+  coreMethods,
+  liveMethods,
+  talkMethods,
+  dataMethods,
+  renderShellMethods,
+  layoutMethods,
+  browserMethods,
+  eventPlaybackMethods,
+  recordingPlaybackMethods,
+  actionMethods,
+  timelineInteractionMethods,
+  timelineRenderMethods,
+  listMethods,
+  downloadMethods,
+  multiviewMethods,
+  responsiveUxMethods,
+  playbackLayoutMethods,
+);
 
-const baseEnterPlayback = SightlineCard.prototype._enter;
-const baseShowLive = SightlineCard.prototype._showLive;
-const baseRenderTimeline = SightlineCard.prototype._renderTimeline;
-SightlineCard.prototype._openInGridSlot = function(id) { return this._open(id); };
-SightlineCard.prototype._enter = function(...args) {
-  const fromGrid=this._viewMode==='grid'; if(fromGrid && !this._playbackReturnViewMode) this._playbackReturnViewMode='grid';
-  const result=baseEnterPlayback.apply(this,args);
-  const feed=this.shadowRoot.querySelector('.workspace-feed'), timeline=this.shadowRoot.querySelector('.workspace-timeline'), media=this.shadowRoot.querySelector('.workspace-media'), layout=this.shadowRoot.querySelector('.layout'), engWrap=this.shadowRoot.querySelector('#eng-wrap'), grid=this.shadowRoot.querySelector('#cam-grid');
-  if(fromGrid){
-    if(feed){ feed.dataset.playbackGridColumn=feed.style.gridColumn||''; feed.dataset.playbackGridRow=feed.style.gridRow||''; feed.style.gridColumn='1 / -1'; feed.style.gridRow='1'; }
-    if(timeline){ timeline.dataset.playbackDisplay=timeline.style.display||''; timeline.style.display='none'; }
-    if(media){ media.dataset.playbackDisplay=media.style.display||''; media.style.display='none'; }
-    if(layout){ layout.dataset.playbackGridTemplateColumns=layout.style.gridTemplateColumns||''; layout.dataset.playbackGridTemplateAreas=layout.style.gridTemplateAreas||''; layout.style.gridTemplateColumns='minmax(0, 1fr)'; layout.style.gridTemplateAreas='"feed"'; }
-    if(engWrap){ engWrap.dataset.playbackWidth=engWrap.style.width||''; engWrap.dataset.playbackMaxWidth=engWrap.style.maxWidth||''; engWrap.style.display=''; engWrap.style.width='100%'; engWrap.style.maxWidth='none'; }
-    if(grid) grid.style.display='none';
-  }
-  if(engWrap){
-    let back=engWrap.querySelector('#playback-back-live');
-    if(!back){ back=document.createElement('button'); back.type='button'; back.id='playback-back-live'; back.style.cssText='position:absolute;left:12px;top:12px;z-index:80;display:inline-flex;align-items:center;gap:7px;min-height:36px;padding:7px 11px;border:1px solid rgba(255,255,255,.24);border-radius:999px;background:rgba(16,16,18,.72);color:#fff;font:650 12px/1 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;box-shadow:0 5px 18px rgba(0,0,0,.30);backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);cursor:pointer;appearance:none;-webkit-appearance:none'; engWrap.appendChild(back); }
-    const label=fromGrid?'Back to Multiview':'Back to Live'; back.hidden=false; back.style.display='inline-flex'; back.innerHTML=`${ICONS.back}<span>${label}</span>`; back.title=label; back.setAttribute('aria-label',label); back.onclick=()=>this._showLive();
-  }
-  return result;
-};
-SightlineCard.prototype._showLive = function(...args) {
-  const returnToGrid=this._playbackReturnViewMode==='grid'; const result=baseShowLive.apply(this,args); this._playbackReturnViewMode=null;
-  const feed=this.shadowRoot.querySelector('.workspace-feed'), timeline=this.shadowRoot.querySelector('.workspace-timeline'), media=this.shadowRoot.querySelector('.workspace-media'), layout=this.shadowRoot.querySelector('.layout'), engWrap=this.shadowRoot.querySelector('#eng-wrap'), grid=this.shadowRoot.querySelector('#cam-grid'), back=this.shadowRoot.querySelector('#playback-back-live');
-  if(back){ back.hidden=true; back.style.display='none'; }
-  if(feed){ feed.style.gridColumn=feed.dataset.playbackGridColumn||''; feed.style.gridRow=feed.dataset.playbackGridRow||''; delete feed.dataset.playbackGridColumn; delete feed.dataset.playbackGridRow; }
-  if(timeline && 'playbackDisplay' in timeline.dataset){ timeline.style.display=timeline.dataset.playbackDisplay||''; delete timeline.dataset.playbackDisplay; }
-  if(media && 'playbackDisplay' in media.dataset){ media.style.display=media.dataset.playbackDisplay||''; delete media.dataset.playbackDisplay; }
-  if(layout){ layout.style.gridTemplateColumns=layout.dataset.playbackGridTemplateColumns||''; layout.style.gridTemplateAreas=layout.dataset.playbackGridTemplateAreas||''; delete layout.dataset.playbackGridTemplateColumns; delete layout.dataset.playbackGridTemplateAreas; }
-  if(engWrap && 'playbackWidth' in engWrap.dataset){ engWrap.style.width=engWrap.dataset.playbackWidth||''; engWrap.style.maxWidth=engWrap.dataset.playbackMaxWidth||''; delete engWrap.dataset.playbackWidth; delete engWrap.dataset.playbackMaxWidth; }
-  if(returnToGrid){ if(engWrap) engWrap.style.display='none'; if(grid) grid.style.display=''; this._eventsMode='all'; this._mountGrid(); this._renderCamSwitcher(); }
-  this._syncResponsiveWorkspace(); return result;
-};
-SightlineCard.prototype._renderTimeline = function(...args) {
-  const result=baseRenderTimeline.apply(this,args); const h=Math.max(48,Math.min(140,Math.round(Number(this._config?.timeline?.thumbnail_size ?? 84)))), w=Math.max(154,Math.min(420,Math.round(h*3.15)));
-  for(const preview of this.shadowRoot?.querySelectorAll?.('.t-preview')||[]){ preview.style.setProperty('height',`${h}px`,'important'); preview.style.setProperty('width',`min(${w}px, calc(100% - var(--tl-content) - 10px))`,'important'); preview.style.setProperty('max-width',`${w}px`,'important'); }
-  return result;
-};
-
-// ── src/card/multi-recording-init.js ──
-applyMethodGroups(SightlineCard.prototype,multiRecordingMethods,responsiveUxMethods,v115Methods);
-
-const enterPlayback=SightlineCard.prototype._enter;
-const showLive=SightlineCard.prototype._showLive;
-
-SightlineCard.prototype._enter=function(...args){
-  const fromGrid=this._viewMode==='grid',result=enterPlayback.apply(this,args);
-  const q=s=>this.shadowRoot?.querySelector(s),card=q('.card'),feed=q('.workspace-feed'),timeline=q('.workspace-timeline'),media=q('.workspace-media'),layout=q('.layout'),eng=q('#eng-wrap'),grid=q('#cam-grid');
-  if(fromGrid){
-    card?.classList.add('playback-fullcard');
-    layout?.style.setProperty('grid-template-columns','minmax(0, 1fr)','important');
-    layout?.style.setProperty('grid-template-areas','"feed"','important');
-    feed?.style.setProperty('grid-column','1 / -1','important');feed?.style.setProperty('grid-row','1','important');
-    timeline?.style.setProperty('display','none','important');media?.style.setProperty('display','none','important');
-    eng?.style.setProperty('display','block','important');eng?.style.setProperty('width','100%','important');eng?.style.setProperty('max-width','none','important');
-    grid?.style.setProperty('display','none','important');
-  }
-  const back=eng?.querySelector('#playback-back-live');
-  if(back){
-    for(const [k,v] of [['left','10px'],['top','10px'],['gap','5px'],['min-height','30px'],['padding','5px 9px'],['font-size','11px']])back.style.setProperty(k,v);
-    const icon=back.querySelector('svg');if(icon){icon.style.width='13px';icon.style.height='13px';}
-  }
-  return result;
-};
-
-SightlineCard.prototype._showLive=function(...args){
-  const result=showLive.apply(this,args);
-  this.shadowRoot?.querySelector('.card')?.classList.remove('playback-fullcard');
-  this._syncResponsiveWorkspace?.();
-  return result;
-};
-
-// ── src/editor/methods.js ──
-// Visual editor behavior.
-const editorMethods = {
-setConfig(c) { this._config=c; this._render(); },
-
+// ── src/editor/registry.js ──
+/**
+ * Home Assistant / Frigate entity discovery for the visual editor.
+ *
+ * Entity-registry ownership is authoritative when available; configured camera
+ * entities are retained as a fallback so temporary HA availability changes do
+ * not make an existing card impossible to edit.
+ */
+const editorRegistryMethods = {
 set hass(h) {
     this._hass = h;
     // Registry ownership is the authoritative way to decide whether a camera
@@ -10767,8 +11600,12 @@ _entityOptionLabel(entityId) {
     } catch(_err) {}
     name=name || state?.attributes?.friendly_name || entityId;
     return name===entityId ? entityId : `${name} — ${entityId}`;
-  },
+  }
+};
 
+// ── src/editor/render.js ──
+/** Render the visual editor form and bind its local controls. */
+const editorRenderMethods = {
 _render() {
     // The selector is intentionally Frigate-only. Do not fall back to every
     // camera entity simply because registry discovery returned an empty list.
@@ -11055,7 +11892,48 @@ _render() {
     if(transparency && transparencyLbl){
       transparency.addEventListener('input',()=>{transparencyLbl.textContent=`${transparency.value}%`;});
     }
-  },
+
+    // Startup behavior lives in the main editor render path rather than a
+    // prototype wrapper, so every editable setting has a single owner.
+    const defaultTab=['live','clips','recordings','reviews'].includes(this._config?.default_tab)
+      ? this._config.default_tab
+      : 'live';
+    const thumbnailSize=Math.max(48,Math.min(140,Number(this._config?.timeline?.thumbnail_size ?? 84)));
+    const startup=document.createElement('div');
+    startup.id='startup-options';
+    startup.className='section';
+    startup.innerHTML=`
+      <span class="field-label">Startup & timeline previews</span>
+      <div class="adv-grid">
+        <label>
+          <span class="field-label">Default tab</span>
+          <select class="tf" id="default_tab">
+            <option value="live" ${defaultTab==='live'?'selected':''}>Live</option>
+            <option value="clips" ${defaultTab==='clips'?'selected':''}>Clips</option>
+            <option value="recordings" ${defaultTab==='recordings'?'selected':''}>Recordings</option>
+            <option value="reviews" ${defaultTab==='reviews'?'selected':''}>Reviews</option>
+          </select>
+        </label>
+        <label class="chk-lbl">
+          <input type="checkbox" id="autoplay_latest_clip" ${this._config?.autoplay_latest_clip?'checked':''}>
+          Autoplay newest clip on startup
+        </label>
+        <label>
+          <span class="field-label">Timeline thumbnail size (px)</span>
+          <input class="tf" id="timeline_thumbnail_size" type="number" min="48" max="140" value="${thumbnailSize}">
+        </label>
+      </div>`;
+    (this.querySelector('.ed-wrap')||this).appendChild(startup);
+    for(const control of startup.querySelectorAll('input,select')) {
+      control.addEventListener('change',()=>this._u());
+    }
+  }
+};
+
+// ── src/editor/config.js ──
+/** Read editor controls, normalize card configuration, and emit HA updates. */
+const editorConfigMethods = {
+setConfig(c) { this._config=c; this._render(); },
 
 _getCams() {
     const rows = [...this.querySelectorAll('[data-row]')];
@@ -11129,6 +12007,7 @@ _u() {
       glyph_max_px: Math.max(12,Math.min(48,Number(g('timeline_glyph_max_px')||30))),
       max_glyphs: Math.max(1,Math.min(6,Math.round(Number(g('timeline_max_glyphs')||3)))),
       max_thumbnails: Math.max(0,Math.min(24,Math.round(Number(g('timeline_max_thumbnails')||12)))),
+      thumbnail_size: Math.max(48,Math.min(140,Math.round(Number(g('timeline_thumbnail_size')||84)))),
     };
     if(c.timeline.glyph_max_px<c.timeline.glyph_min_px)c.timeline.glyph_max_px=c.timeline.glyph_min_px;
     const dlMax=Math.max(1,Math.min(720,Number(g('download_max_range_minutes')||120)));
@@ -11137,6 +12016,12 @@ _u() {
       max_range_minutes: dlMax,
     };
     c.media = { reviewed_default: this.querySelector('#reviewed_default')?.value || 'all' };
+
+    // Startup behavior. Hidden tabs cannot be selected as the initial view.
+    const requestedTab=this.querySelector('#default_tab')?.value||'live';
+    c.default_tab=requestedTab!=='live'&&hidden.includes(requestedTab)?'live':requestedTab;
+    c.autoplay_latest_clip=this.querySelector('#autoplay_latest_clip')?.checked===true;
+
     // two-way audio
     c.two_way_audio = this.querySelector('#two_way_audio')?.checked === true;
     c.two_way_audio_disconnect_seconds = Math.max(0, Number(g('two_way_audio_disconnect_seconds') || 90));
@@ -11152,39 +12037,23 @@ _u() {
 _dispatch() { this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config}})); }
 };
 
+// ── src/editor/methods.js ──
+/** Public method-group barrel for the Sightline visual editor. */
+const editorMethods = Object.assign(
+  {},
+  editorRegistryMethods,
+  editorRenderMethods,
+  editorConfigMethods,
+);
+
 // ── src/editor/SightlineCardEditor.js ──
+/** Sightline visual editor custom element. */
 class SightlineCardEditor extends HTMLElement {}
-applyMethodGroups(SightlineCardEditor.prototype, editorMethods);
 
-const baseRender = SightlineCardEditor.prototype._render;
-const baseUpdate = SightlineCardEditor.prototype._u;
-
-SightlineCardEditor.prototype._render = function(...args) {
-  const result=baseRender.apply(this,args);
-  if(!this.querySelector('#v11-startup-options')) {
-    const defaultTab=['live','clips','recordings','reviews'].includes(this._config?.default_tab) ? this._config.default_tab : 'live';
-    const thumbnailSize=Math.max(48,Math.min(140,Number(this._config?.timeline?.thumbnail_size ?? 84)));
-    const wrap=document.createElement('div');
-    wrap.id='v11-startup-options'; wrap.className='section';
-    wrap.innerHTML=`<span class="field-label">Startup & timeline previews</span><div class="adv-grid"><label><span class="field-label">Default tab</span><select class="tf" id="default_tab"><option value="live" ${defaultTab==='live'?'selected':''}>Live</option><option value="clips" ${defaultTab==='clips'?'selected':''}>Clips</option><option value="recordings" ${defaultTab==='recordings'?'selected':''}>Recordings</option><option value="reviews" ${defaultTab==='reviews'?'selected':''}>Reviews</option></select></label><label class="chk-lbl"><input type="checkbox" id="autoplay_latest_clip" ${this._config?.autoplay_latest_clip?'checked':''}> Autoplay newest clip on startup</label><label><span class="field-label">Timeline thumbnail size (px)</span><input class="tf" id="timeline_thumbnail_size" type="number" min="48" max="140" value="${thumbnailSize}"></label></div>`;
-    (this.querySelector('.ed-wrap') || this).appendChild(wrap);
-    for(const el of wrap.querySelectorAll('input,select')) el.addEventListener('change',()=>this._u());
-  }
-  return result;
-};
-
-SightlineCardEditor.prototype._u = function(...args) {
-  const requested=this.querySelector('#default_tab')?.value;
-  const autoplay=this.querySelector('#autoplay_latest_clip')?.checked === true;
-  const thumb=Number(this.querySelector('#timeline_thumbnail_size')?.value);
-  if(requested || Number.isFinite(thumb)) {
-    const hidden=Array.isArray(this._config?.hidden_tabs)?this._config.hidden_tabs:[];
-    this._config={...(this._config||{}),default_tab:requested && requested!=='live' && hidden.includes(requested)?'live':(requested||'live'),autoplay_latest_clip:autoplay,timeline:{...(this._config?.timeline||{}),...(Number.isFinite(thumb)?{thumbnail_size:Math.max(48,Math.min(140,Math.round(thumb)))}:{})}};
-  }
-  return baseUpdate.apply(this,args);
-};
+applyMethodGroups(SightlineCardEditor.prototype,editorMethods);
 
 // ── src/index.js ──
+/** Register Sightline's card/editor custom elements with Home Assistant. */
 if (!customElements.get(CARD_TAG)) {
   customElements.define(CARD_TAG, SightlineCard);
 }
