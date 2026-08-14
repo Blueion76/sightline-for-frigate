@@ -19,7 +19,7 @@ test.write_text(text.replace(anchor,replacement,1))
 
 changelog = Path('CHANGELOG.md')
 text = changelog.read_text()
-anchor = "- Unifies Multiview clip playback so clips selected from the Clips browser, Reviews, or the timeline temporarily replace the entire player workspace instead of opening inside only the camera tile that produced the event. Back to Multiview restores the original camera grid.\n"
+anchor = "- Unified Multiview clip playback so clips selected from the Clips browser, Reviews, or the timeline temporarily replace the entire player workspace instead of opening inside only the camera tile that produced the event. Back to Multiview restores the original grid.\n"
 addition = anchor + "- Fixed the wide-workstation Clips side-panel edge case where a visibly mounted Multiview grid could briefly disagree with `_viewMode`. Full-player playback now recognizes the rendered grid as a fallback, so side-panel clip selection still replaces the entire Multiview player and returns to the grid afterward.\n"
 if anchor not in text:
     raise SystemExit('changelog anchor not found')
