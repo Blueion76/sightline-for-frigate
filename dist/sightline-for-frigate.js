@@ -10394,47 +10394,28 @@ const responsiveUxMethods = {
   }
 };
 
-// ── src/card/ios-timeline-date.js ──
-function iosTimelineParseDateValue(value) {
-  const m=String(value||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if(!m) return null;
-  const y=Number(m[1]),mo=Number(m[2]),da=Number(m[3]);
-  if(!Number.isFinite(y)||!Number.isFinite(mo)||!Number.isFinite(da)) return null;
-  const date=new Date(y,mo-1,da,12,0,0,0);
-  if(date.getFullYear()!==y||date.getMonth()!==mo-1||date.getDate()!==da) return null;
-  return {y,mo,da,date,value:`${String(y).padStart(4,'0')}-${String(mo).padStart(2,'0')}-${String(da).padStart(2,'0')}`};
-}
+// ── src/card/v115.js ──
+const SCALES=[60,300,600,1800,2700,3600,10800,21600,43200,86400];
+const SCALE_LABELS={60:'1m',300:'5m',600:'10m',1800:'30m',2700:'45m',3600:'1h',10800:'3h',21600:'6h',43200:'12h',86400:'24h'};
+const parseDate=value=>{
+  const m=String(value||'').match(/^(\d{4})-(\d{2})-(\d{2})$/); if(!m)return null;
+  const y=+m[1],mo=+m[2],d=+m[3],date=new Date(y,mo-1,d,12);
+  return date.getFullYear()===y&&date.getMonth()===mo-1&&date.getDate()===d?{y,date,value:`${m[1]}-${m[2]}-${m[3]}`}:null;
+};
+const dateValue=ts=>{
+  const d=new Date(Number(ts||Date.now()/1000)*1000),p=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+};
 
-function iosTimelineLocalDateValue(ts) {
-  const d=new Date(Number(ts||Date.now()/1000)*1000);
-  const y=d.getFullYear();
-  const m=String(d.getMonth()+1).padStart(2,'0');
-  const day=String(d.getDate()).padStart(2,'0');
-  return `${y}-${m}-${day}`;
-}
-
-function iosTimelineDisplayDate(ds, includeYear=false) {
-  const parsed=iosTimelineParseDateValue(ds);
-  if(!parsed) return '';
-  const options={month:'short',day:'numeric'};
-  if(includeYear) options.year='numeric';
-  return parsed.date.toLocaleDateString([],options);
-}
-
-const iosTimelineDateMethods = {
-  _ensureTimelineNativeDateInput() {
-    const input=responsiveUxMethods._ensureTimelineNativeDateInput.call(this);
-    if(!input) return null;
+const v115Methods={
+  _ensureTimelineNativeDateInput(){
+    const input=responsiveUxMethods._ensureTimelineNativeDateInput.call(this); if(!input)return null;
     const host=input.parentElement;
     if(host){
-      host.style.gap='6px';
-      host.style.whiteSpace='nowrap';
-      host.style.overflow='visible';
-      let label=host.querySelector?.('.timeline-date-label');
-      if(!label){
-        label=document.createElement('span');
-        label.className='timeline-date-label';
-        label.setAttribute('aria-hidden','true');
+      Object.assign(host.style,{gap:'6px',whiteSpace:'nowrap',overflow:'visible'});
+      if(!host.querySelector?.('.timeline-date-label')){
+        const label=document.createElement('span');
+        label.className='timeline-date-label'; label.setAttribute('aria-hidden','true');
         label.style.cssText='display:none;pointer-events:none;white-space:nowrap;font:650 11px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;font-variant-numeric:tabular-nums;letter-spacing:-.01em;';
         host.insertBefore(label,input);
       }
@@ -10443,409 +10424,137 @@ const iosTimelineDateMethods = {
     return input;
   },
 
-  _prepareTimelineNativeDateInput(input) {
-    const result=responsiveUxMethods._prepareTimelineNativeDateInput.call(this,input);
+  _prepareTimelineNativeDateInput(input){
+    const out=responsiveUxMethods._prepareTimelineNativeDateInput.call(this,input);
     this._updateTimelineDateLabel();
-    return result;
+    return out;
   },
 
-  _updateTimelineDateLabel(value=null) {
-    const root=this.shadowRoot;
-    if(!root?.querySelector) return;
-    const host=root.querySelector('#cal-btn');
-    const input=root.querySelector('#timeline-native-date');
-    if(!host||!input) return;
-
-    let ds='';
-    if(typeof value==='string' && iosTimelineParseDateValue(value)) ds=iosTimelineParseDateValue(value).value;
-    else if(Number.isFinite(Number(value))) ds=iosTimelineLocalDateValue(Number(value));
-    else if(Number.isFinite(Number(this._timelineFocusTs))) ds=iosTimelineLocalDateValue(Number(this._timelineFocusTs));
-    else if(input.value && iosTimelineParseDateValue(input.value)) ds=iosTimelineParseDateValue(input.value).value;
-    else ds=iosTimelineLocalDateValue(Date.now()/1000);
-
-    const today=iosTimelineLocalDateValue(Date.now()/1000);
-    const isToday=ds===today;
-    const parsed=iosTimelineParseDateValue(ds);
-    const currentYear=new Date().getFullYear();
-    const shortLabel=isToday ? '' : iosTimelineDisplayDate(ds,parsed?.y!==currentYear);
-    const fullLabel=isToday ? 'Today' : iosTimelineDisplayDate(ds,true);
-    const label=host.querySelector?.('.timeline-date-label');
-    if(label){
-      label.textContent=shortLabel;
-      label.style.display=isToday?'none':'inline-block';
-    }
-    host.classList?.toggle?.('has-date-label',!isToday);
-    host.title=`Calendar · ${fullLabel}`;
-    input.setAttribute('aria-label',`Timeline date, ${fullLabel}`);
+  _updateTimelineDateLabel(value=null){
+    const root=this.shadowRoot,host=root?.querySelector?.('#cal-btn'),input=root?.querySelector?.('#timeline-native-date');
+    if(!host||!input)return;
+    const parsedString=typeof value==='string'?parseDate(value):null;
+    const ds=parsedString?.value || (Number.isFinite(Number(value))?dateValue(value):Number.isFinite(Number(this._timelineFocusTs))?dateValue(this._timelineFocusTs):parseDate(input.value)?.value||dateValue());
+    const today=dateValue(),isToday=ds===today,parsed=parseDate(ds);
+    const fmt=year=>parsed?.date.toLocaleDateString([],{month:'short',day:'numeric',...(year?{year:'numeric'}:{})})||'';
+    const short=isToday?'':fmt(parsed?.y!==new Date().getFullYear()),full=isToday?'Today':fmt(true),label=host.querySelector?.('.timeline-date-label');
+    if(label){label.textContent=short;label.style.display=isToday?'none':'inline-block';}
+    host.classList?.toggle?.('has-date-label',!isToday); host.title=`Calendar · ${full}`;
+    input.setAttribute('aria-label',`Timeline date, ${full}`);
   },
 
-  async _pickDay(ds) {
-    const parsed=iosTimelineParseDateValue(ds);
-    if(!parsed) return actionMethods._pickDay.call(this,ds);
-
-    // Keep the proven v1.1.2/v1.1.3 navigation behavior: preserve zoom, put
-    // the selected day's visible range at local midnight, leave LIVE-follow,
-    // and invalidate any old scrub/playback clocks first.
-    actionMethods._pickDay.call(this,parsed.value);
-    this._updateTimelineDateLabel(parsed.value);
-
-    // Date selection should be a complete navigation action, not half of one.
-    // Previously it only translated the viewport, so the user had to tap the
-    // timeline a second time before continuous recording playback started.
-    // Seek the same fixed playhead timestamp that is already inside the newly
-    // translated midnight-first window. This preserves the exact current zoom
-    // and the midnight viewport edge while starting playback immediately.
+  async _pickDay(ds){
+    const parsed=parseDate(ds); if(!parsed)return actionMethods._pickDay.call(this,ds);
+    actionMethods._pickDay.call(this,parsed.value); this._updateTimelineDateLabel(parsed.value);
     const target=Number(this._timelineFocusTs);
-    if(Number.isFinite(target) && typeof this._seekTimelineTarget==='function') {
+    if(Number.isFinite(target)&&typeof this._seekTimelineTarget==='function'){
       this._scrubTarget=target;
-      try { await this._seekTimelineTarget(target); }
-      catch(err) { console.warn('[Sightline] timeline calendar seek failed',err); }
+      try{await this._seekTimelineTarget(target);}catch(err){console.warn('[Sightline] timeline calendar seek failed',err);}
     }
   },
 
-  _goNow() {
-    const result=actionMethods._goNow.call(this);
-    this._updateTimelineDateLabel();
-    return result;
+  _updateTimelinePlaybackTime(ts){
+    const out=timelineInteractionMethods._updateTimelinePlaybackTime.call(this,ts);
+    this._updateTimelineDateLabel(ts); return out;
   },
 
-  _updateTimelinePlaybackTime(ts) {
-    const result=timelineInteractionMethods._updateTimelinePlaybackTime.call(this,ts);
-    this._updateTimelineDateLabel(ts);
-    return result;
-  }
-};
-
-// ── src/card/v115-hardening.js ──
-const TIMELINE_SCALE_SECONDS = Object.freeze([
-  60,
-  5 * 60,
-  10 * 60,
-  30 * 60,
-  45 * 60,
-  60 * 60,
-  3 * 60 * 60,
-  6 * 60 * 60,
-  12 * 60 * 60,
-  24 * 60 * 60,
-]);
-
-function timelineScaleStep(spanSeconds, direction) {
-  const current = Math.max(1, Number(spanSeconds) || 10 * 60);
-  if (direction === 'in') {
-    for (let i = TIMELINE_SCALE_SECONDS.length - 1; i >= 0; i--) {
-      if (TIMELINE_SCALE_SECONDS[i] < current - 1) return TIMELINE_SCALE_SECONDS[i];
-    }
-    return TIMELINE_SCALE_SECONDS[0];
-  }
-  for (const span of TIMELINE_SCALE_SECONDS) {
-    if (span > current + 1) return span;
-  }
-  return TIMELINE_SCALE_SECONDS[TIMELINE_SCALE_SECONDS.length - 1];
-}
-
-function timelineScaleLabel(spanSeconds) {
-  const span = Math.max(1, Math.round(Number(spanSeconds) || 0));
-  const exact = new Map([
-    [60, '1m'], [300, '5m'], [600, '10m'], [1800, '30m'], [2700, '45m'],
-    [3600, '1h'], [10800, '3h'], [21600, '6h'], [43200, '12h'], [86400, '24h'],
-  ]).get(span);
-  if (exact) return exact;
-  if (span < 3600) return `${Math.max(1, Math.round(span / 60))}m`;
-  const hours = span / 3600;
-  return Number.isInteger(hours) ? `${hours}h` : `${Math.round(hours * 10) / 10}h`;
-}
-
-function setTimelineWindow(card, spanSeconds, anchorTs, anchorRatio) {
-  const span = Math.max(60, Math.min(86400, Math.round(Number(spanSeconds) || 10 * 60)));
-  const hasExplicitAnchor = Number.isFinite(Number(anchorTs));
-  const ratio = Number.isFinite(Number(anchorRatio))
-    ? Math.max(0, Math.min(1, Number(anchorRatio)))
-    : 0.5;
-
-  if (card._timelineFollowingLive && !hasExplicitAnchor) {
-    const now = Math.floor(Date.now() / 1000);
-    const half = span / 2;
-    card._winStart = Math.floor(now - half);
-    card._winEnd = Math.floor(now + half);
-    if (card._winStart < 0) {
-      card._winEnd -= card._winStart;
-      card._winStart = 0;
-    }
-    card._timelineFocusTs = now;
-    card._scrubTarget = now;
-    card._exhausted = false;
-    return span;
-  }
-
-  const anchor = hasExplicitAnchor
-    ? Number(anchorTs)
-    : (Number.isFinite(Number(card._timelineFocusTs))
-      ? Number(card._timelineFocusTs)
-      : ((Number(card._winStart) + Number(card._winEnd)) / 2));
-  let focus = anchor - (0.5 - ratio) * span;
-  let start = Math.floor(focus - span / 2);
-  let end = Math.floor(focus + span / 2);
-  const now = Math.floor(Date.now() / 1000);
-
-  // Match the existing anchored zoom behavior: historical views never gain a
-  // future-only tail, while LIVE +/- remains centered through the branch above.
-  if (end > now) {
-    const shift = end - now;
-    start -= shift;
-    end -= shift;
-    focus -= shift;
-  }
-  if (start < 0) {
-    const shift = -start;
-    start += shift;
-    end += shift;
-    focus += shift;
-  }
-
-  card._winStart = start;
-  card._winEnd = end;
-  card._timelineFocusTs = Math.max(start, Math.min(end, Math.round(focus)));
-  card._scrubTarget = card._timelineFocusTs;
-  card._exhausted = false;
-  return span;
-}
-
-function desktopTimelineDragTarget(target) {
-  if (!target?.closest) return false;
-  if (!target.closest('.t-preview,.t-ev')) return false;
-  if (target.closest('button,a,input,select,textarea,.tl-zoom-controls,.tl-playhead i')) return false;
-  return true;
-}
-
-const v115HardeningMethods = {
-  async _refreshMicrophoneAvailability() {
-    // enumerateDevices() is deliberately privacy-restricted in several browser
-    // contexts before permission has been granted. Treat getUserMedia support
-    // as "microphone may be available" and let the actual permission request be
-    // authoritative. Otherwise Sightline can hide Talk before the user has any
-    // way to grant microphone permission.
-    const supported = !!(this._config?.two_way_audio && navigator.mediaDevices?.getUserMedia);
-    let present = supported;
-    if (supported && navigator.mediaDevices?.enumerateDevices) {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        if (Array.isArray(devices) && devices.some(device => device?.kind === 'audioinput')) present = true;
-        // An empty list is intentionally not treated as proof that no mic exists.
-      } catch (_) {
-        present = true;
-      }
-    }
-
-    const changed = this._microphonePresent !== present;
-    this._microphonePresent = present;
-    if (!present && this._talkSpeaking) {
-      try { await this._stopTalk(); } catch (_) {}
-    }
-    if (changed && this.isConnected) this._renderStreamCtrl();
+  async _refreshMicrophoneAvailability(){
+    const media=navigator.mediaDevices,supported=!!(this._config?.two_way_audio&&media?.getUserMedia);
+    let present=supported;
+    if(supported&&media?.enumerateDevices){try{const devices=await media.enumerateDevices();if(devices?.some?.(d=>d?.kind==='audioinput'))present=true;}catch(_){present=true;}}
+    const changed=this._microphonePresent!==present; this._microphonePresent=present;
+    if(!present&&this._talkSpeaking)try{await this._stopTalk();}catch(_){}
+    if(changed&&this.isConnected)this._renderStreamCtrl();
     return present;
   },
 
-  _toggleLiveAudio() {
-    const video = this._go2rtcLive?.video || this._findVideo?.(this._engine);
-    if (!video) return;
-    this._liveAudioEnabled = !this._liveAudioEnabled;
-    try {
-      video.muted = !this._liveAudioEnabled;
-      video.volume = 1;
-      if (this._liveAudioEnabled) {
-        video.setAttribute?.('playsinline', '');
-        const play = video.play?.();
-        if (play?.catch) play.catch(() => {});
-      }
-    } catch (_) {}
-    this._renderStreamCtrl();
-  },
-
-  _renderStreamCtrl() {
-    const result = liveMethods._renderStreamCtrl.call(this);
-    const bar = this.shadowRoot?.querySelector?.('#stream-ctrl-bar');
-    if (!bar) return result;
-    const inGrid = this._viewMode === 'grid';
-    const isLive = !this._playing && this.shadowRoot.querySelector('#viewer')?.style.display !== 'flex';
-    const video = this._go2rtcLive?.video || null;
-    const streamHasAudio = !!(
-      this._liveAudioAvailable ||
-      this._go2rtcLive?.stream?.getAudioTracks?.().length
-    );
-
-    // WebRTC must start muted in many browsers to satisfy autoplay policy.
-    // Surface an explicit speaker button once a receive-audio track is known so
-    // unmuting always happens from a user gesture instead of depending on native
-    // <video> chrome that may be hidden or inconsistent inside HA/WebViews.
-    if (isLive && !inGrid && video && streamHasAudio) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.id = 'sc-audio';
-      button.className = `scb-btn audio-btn${this._liveAudioEnabled ? ' active' : ''}`;
-      button.innerHTML = this._liveAudioEnabled ? ICONS.volOn : ICONS.volOff;
-      button.title = this._liveAudioEnabled ? 'Mute live audio' : 'Unmute live audio';
-      button.setAttribute('aria-label', button.title);
-      button.setAttribute('aria-pressed', String(!!this._liveAudioEnabled));
-      bar.insertBefore(button, bar.firstChild);
+  _renderStreamCtrl(){
+    const out=liveMethods._renderStreamCtrl.call(this),bar=this.shadowRoot?.querySelector?.('#stream-ctrl-bar');
+    if(!bar)return out;
+    const video=this._go2rtcLive?.video,hasAudio=!!(this._liveAudioAvailable||this._go2rtcLive?.stream?.getAudioTracks?.().length),live=!this._playing&&this.shadowRoot.querySelector('#viewer')?.style.display!=='flex';
+    if(live&&this._viewMode!=='grid'&&video&&hasAudio){
+      const b=document.createElement('button'); b.type='button'; b.id='sc-audio';
+      b.className=`scb-btn audio-btn${this._liveAudioEnabled?' active':''}`; b.innerHTML=this._liveAudioEnabled?ICONS.volOn:ICONS.volOff;
+      b.title=this._liveAudioEnabled?'Mute live audio':'Unmute live audio'; b.setAttribute('aria-label',b.title); b.setAttribute('aria-pressed',String(!!this._liveAudioEnabled));
+      bar.insertBefore(b,bar.firstChild);
     }
-    return result;
+    return out;
   },
 
-  _zoomTimeline(factor, anchorTs, anchorRatio) {
-    const oldSpan = Math.max(1, Number(this._winEnd) - Number(this._winStart));
-    const direction = Number(factor || 1) >= 1 ? 'in' : 'out';
-    const nextSpan = timelineScaleStep(oldSpan, direction);
-    setTimelineWindow(this, nextSpan, anchorTs, anchorRatio);
-    this._timelineZoomMax = 60; // 60x = 1 minute visible span.
-    this._timelineZoom = 3600 / nextSpan;
-    this._renderTimeline();
-    this._renderRange();
-    this._renderTimelineZoomLabel();
-    this._scheduleTimelineDynamicData('motion');
-    this._scheduleTimelineDataLoad();
+  _zoomTimeline(factor,anchorTs,anchorRatio){
+    const old=Math.max(1,Number(this._winEnd)-Number(this._winStart)),zoomIn=Number(factor||1)>=1;
+    let next=zoomIn?SCALES[0]:SCALES.at(-1);
+    if(zoomIn){for(let i=SCALES.length-1;i>=0;i--)if(SCALES[i]<old-1){next=SCALES[i];break;}}
+    else for(const span of SCALES)if(span>old+1){next=span;break;}
+    const span=Math.max(60,Math.min(86400,next)),explicit=Number.isFinite(Number(anchorTs)),ratio=Number.isFinite(Number(anchorRatio))?Math.max(0,Math.min(1,Number(anchorRatio))):.5;
+    if(this._timelineFollowingLive&&!explicit){
+      const now=Math.floor(Date.now()/1000); this._winStart=Math.max(0,Math.floor(now-span/2)); this._winEnd=this._winStart+span; this._timelineFocusTs=this._scrubTarget=now;
+    }else{
+      const anchor=explicit?Number(anchorTs):Number.isFinite(Number(this._timelineFocusTs))?Number(this._timelineFocusTs):(Number(this._winStart)+Number(this._winEnd))/2;
+      let focus=anchor-(.5-ratio)*span,start=Math.floor(focus-span/2),end=start+span,now=Math.floor(Date.now()/1000);
+      if(end>now){const shift=end-now;start-=shift;end-=shift;focus-=shift;}
+      if(start<0){focus-=start;end-=start;start=0;}
+      this._winStart=start;this._winEnd=end;this._timelineFocusTs=Math.max(start,Math.min(end,Math.round(focus)));this._scrubTarget=this._timelineFocusTs;
+    }
+    this._exhausted=false; this._timelineZoomMax=60; this._timelineZoom=3600/span;
+    this._renderTimeline(); this._renderRange(); this._renderTimelineZoomLabel(); this._scheduleTimelineDynamicData('motion'); this._scheduleTimelineDataLoad();
   },
 
-  _renderTimelineZoomLabel() {
-    const el = this._$('#tl-zoom-level');
-    if (!el) return;
-    el.textContent = timelineScaleLabel(Number(this._winEnd) - Number(this._winStart));
+  _renderTimelineZoomLabel(){
+    const el=this._$('#tl-zoom-level'); if(!el)return;
+    const span=Math.max(1,Math.round(Number(this._winEnd)-Number(this._winStart)));
+    el.textContent=SCALE_LABELS[span]||(span<3600?`${Math.max(1,Math.round(span/60))}m`:`${Math.round(span/360)/10}h`);
   },
 
-  _wireScrub() {
+  _wireScrub(){
     timelineInteractionMethods._wireScrub.call(this);
-    const track = this.shadowRoot?.querySelector?.('#tl-track');
-    if (!track) return;
-    this._wireDesktopTimelineCardDrag(track, this._scrubAbort?.signal);
-  },
-
-  _wireDesktopTimelineCardDrag(track, signal) {
-    let drag = null;
-    const options = signal ? { signal } : undefined;
-
-    const finish = (event, cancelled = false) => {
-      if (!drag || (event?.pointerId != null && event.pointerId !== drag.pointerId)) return;
-      const state = drag;
-      drag = null;
-      try {
-        if (track.hasPointerCapture?.(state.pointerId)) track.releasePointerCapture(state.pointerId);
-      } catch (_) {}
-      if (!state.moved) return;
-
-      this._timelineInteracting = false;
-      this._scrubGestureInvalidated = false;
-      track.classList?.remove?.('grab');
-      this._timelineSuppressClickUntil = performance.now() + 400;
-      const target = this._scrubTarget ?? this._timelineFocusTs ?? this._winEnd;
-      const crossedLive = this._timelineLiveCrossed || this._isAtLiveEdge(target);
-      const wasLive = state.wasLive;
-      this._timelineLiveCrossed = false;
-      this._timelineWasLiveBeforeGesture = false;
-
-      if (!cancelled) {
-        if (crossedLive) this._refreshLiveFromTimeline({ restart: !wasLive });
-        else this._seekTimelineTarget(target);
-        this._scheduleTimelineDataLoad();
-      } else {
-        this._renderTimeline();
-      }
+    const track=this.shadowRoot?.querySelector?.('#tl-track'),signal=this._scrubAbort?.signal; if(!track)return;
+    let drag=null; const opts=signal?{signal}:undefined;
+    const finish=(e,cancel=false)=>{
+      if(!drag||(e?.pointerId!=null&&e.pointerId!==drag.id))return;
+      const state=drag;drag=null;try{if(track.hasPointerCapture?.(state.id))track.releasePointerCapture(state.id);}catch(_){}
+      if(!state.moved)return;
+      this._timelineInteracting=false;this._scrubGestureInvalidated=false;track.classList?.remove?.('grab');this._timelineSuppressClickUntil=performance.now()+400;
+      const target=this._scrubTarget??this._timelineFocusTs??this._winEnd,crossed=this._timelineLiveCrossed||this._isAtLiveEdge(target),wasLive=state.wasLive;
+      this._timelineLiveCrossed=this._timelineWasLiveBeforeGesture=false;
+      if(cancel)this._renderTimeline();else{crossed?this._refreshLiveFromTimeline({restart:!wasLive}):this._seekTimelineTarget(target);this._scheduleTimelineDataLoad();}
     };
-
-    track.addEventListener('pointerdown', event => {
-      if (event.pointerType !== 'mouse' || event.button !== 0 || this._downloadRange) return;
-      if (!desktopTimelineDragTarget(event.target)) return;
-      drag = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        winStart: Number(this._winStart),
-        winEnd: Number(this._winEnd),
-        focus: Number.isFinite(Number(this._timelineFocusTs))
-          ? Number(this._timelineFocusTs)
-          : ((Number(this._winStart) + Number(this._winEnd)) / 2),
-        wasLive: this._timelineFollowingLive === true,
-        moved: false,
-        invalidated: false,
-      };
-      try { track.setPointerCapture?.(event.pointerId); } catch (_) {}
-    }, options);
-
-    track.addEventListener('pointermove', event => {
-      if (!drag || event.pointerId !== drag.pointerId) return;
-      const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
-      if (!drag.moved && distance < 4) return;
-
-      if (!drag.moved) {
-        drag.moved = true;
-        this._timelineInteracting = true;
-        this._timelineWasLiveBeforeGesture = drag.wasLive;
-        this._timelineFollowingLive = false;
-        this._timelineLiveCrossed = false;
-        this._scrubGestureInvalidated = true;
-        if (this._playing || this._activePlaybackCleanup) this._invalidatePlaybackForTimelineMove();
-        track.classList?.add?.('grab');
-      }
-
-      event.preventDefault?.();
-      event.stopPropagation?.();
-      const rect = track.getBoundingClientRect();
-      const size = Math.max(1, track.clientHeight || rect.height || 1);
-      const span = Math.max(1, drag.winEnd - drag.winStart);
-      const delta = -(event.clientY - drag.startY);
-      const pan = Math.round(delta / size * span);
-      let start = drag.winStart - pan;
-      let end = drag.winEnd - pan;
-      let focus = drag.focus - pan;
-      const now = Math.floor(Date.now() / 1000);
-      const crossedLive = drag.focus < now - 1 && focus >= now - 1;
-
-      if (start < 0) {
-        const shift = -start;
-        start += shift;
-        end += shift;
-        focus += shift;
-      }
-      this._winStart = start;
-      this._winEnd = end;
-      this._timelineFocusTs = Math.max(start, Math.min(end, Math.round(focus)));
-      this._exhausted = false;
-
-      if (crossedLive) {
-        this._timelineLiveCrossed = true;
-        this._scrubTarget = now;
-      } else {
-        this._scrubTarget = this._timelineFocusTs;
-      }
-      this._updateTimelineLive();
-      this._renderRange();
-      this._reconcileTimelineDuringMove();
-      this._scheduleTimelineDynamicData('motion');
-      this._updateTimelineScrubLabel(this._scrubTarget);
-    }, options);
-
-    track.addEventListener('pointerup', event => finish(event, false), options);
-    track.addEventListener('pointercancel', event => finish(event, true), options);
-    track.addEventListener('lostpointercapture', event => {
-      if (drag && event.pointerId === drag.pointerId) finish(event, false);
-    }, options);
+    track.addEventListener('pointerdown',e=>{
+      if(e.pointerType!=='mouse'||e.button!==0||this._downloadRange||!e.target?.closest?.('.t-preview,.t-ev')||e.target.closest('button,a,input,select,textarea,.tl-zoom-controls,.tl-playhead i'))return;
+      drag={id:e.pointerId,x:e.clientX,y:e.clientY,start:+this._winStart,end:+this._winEnd,focus:Number.isFinite(+this._timelineFocusTs)?+this._timelineFocusTs:(+this._winStart+ +this._winEnd)/2,wasLive:this._timelineFollowingLive===true,moved:false};
+      try{track.setPointerCapture?.(e.pointerId);}catch(_){}
+    },opts);
+    track.addEventListener('pointermove',e=>{
+      if(!drag||e.pointerId!==drag.id)return;
+      if(!drag.moved&&Math.hypot(e.clientX-drag.x,e.clientY-drag.y)<4)return;
+      if(!drag.moved){drag.moved=true;this._timelineInteracting=true;this._timelineWasLiveBeforeGesture=drag.wasLive;this._timelineFollowingLive=this._timelineLiveCrossed=false;this._scrubGestureInvalidated=true;if(this._playing||this._activePlaybackCleanup)this._invalidatePlaybackForTimelineMove();track.classList?.add?.('grab');}
+      e.preventDefault?.();e.stopPropagation?.();
+      const size=Math.max(1,track.clientHeight||track.getBoundingClientRect().height||1),span=Math.max(1,drag.end-drag.start),pan=Math.round((e.clientY-drag.y)/size*span);
+      let start=drag.start+pan,end=drag.end+pan,focus=drag.focus+pan; const now=Math.floor(Date.now()/1000),crossed=drag.focus<now-1&&focus>=now-1;
+      if(start<0){focus-=start;end-=start;start=0;}
+      this._winStart=start;this._winEnd=end;this._timelineFocusTs=Math.max(start,Math.min(end,Math.round(focus)));this._exhausted=false;
+      if(crossed){this._timelineLiveCrossed=true;this._scrubTarget=now;}else this._scrubTarget=this._timelineFocusTs;
+      this._updateTimelineLive();this._renderRange();this._reconcileTimelineDuringMove();this._scheduleTimelineDynamicData('motion');this._updateTimelineScrubLabel(this._scrubTarget);
+    },opts);
+    track.addEventListener('pointerup',e=>finish(e),opts);track.addEventListener('pointercancel',e=>finish(e,true),opts);track.addEventListener('lostpointercapture',e=>{if(drag&&e.pointerId===drag.id)finish(e);},opts);
   },
 
-  _click(event) {
-    if (event?.target?.closest?.('#sc-audio')) {
-      event.preventDefault?.();
-      event.stopPropagation?.();
-      return this._toggleLiveAudio();
+  _click(event){
+    if(event?.target?.closest?.('[data-legend-label]'))return multiRecordingMethods._click.call(this,event);
+    if(event?.target?.closest?.('#sc-audio')){
+      event.preventDefault?.();event.stopPropagation?.();
+      const video=this._go2rtcLive?.video||this._findVideo?.(this._engine); if(!video)return;
+      this._liveAudioEnabled=!this._liveAudioEnabled;
+      try{video.muted=!this._liveAudioEnabled;video.volume=1;if(this._liveAudioEnabled){video.setAttribute?.('playsinline','');video.play?.()?.catch?.(()=>{});}}catch(_){}
+      return this._renderStreamCtrl();
     }
-    if (
-      (this._timelineSuppressClickUntil || 0) > performance.now() &&
-      event?.target?.closest?.('.t-preview,.t-ev,[data-tick]')
-    ) {
-      event.preventDefault?.();
-      event.stopPropagation?.();
-      return;
-    }
-    return browserMethods._click.call(this, event);
+    if((this._timelineSuppressClickUntil||0)>performance.now()&&event?.target?.closest?.('.t-preview,.t-ev,[data-tick]')){event.preventDefault?.();event.stopPropagation?.();return;}
+    return browserMethods._click.call(this,event);
   },
+
+  _renderTimeline(...args){
+    const out=multiRecordingMethods._renderTimeline.apply(this,args);this._updateTimelineDateLabel();return out;
+  }
 };
 
 // ── src/card/SightlineCard.js ──
@@ -10921,66 +10630,27 @@ SightlineCard.prototype._renderTimeline = function(...args) {
 };
 
 // ── src/card/multi-recording-init.js ──
-applyMethodGroups(SightlineCard.prototype, multiRecordingMethods, responsiveUxMethods, iosTimelineDateMethods, v115HardeningMethods);
+applyMethodGroups(SightlineCard.prototype,multiRecordingMethods,responsiveUxMethods,v115Methods);
 
-// v1.1.5's hardening click layer owns the new live-audio control and the
-// post-drag click suppression. The existing multi-recording click layer owns
-// timeline legend filtering. Preserve both parts of the click chain instead of
-// letting the hardening layer skip directly to browserMethods._click().
-const hardenedClick=SightlineCard.prototype._click;
-SightlineCard.prototype._click=function(event){
-  if(event?.target?.closest?.('[data-legend-label]')){
-    return multiRecordingMethods._click.call(this,event);
-  }
-  return hardenedClick.call(this,event);
-};
-
-// The v1.1.0 grid-playback wrapper used ordinary inline styles to collapse the
-// responsive desktop workspace. Workstation CSS intentionally uses !important,
-// so those declarations could win and leave a clip squeezed beside the hidden
-// timeline/browser columns. Reassert the playback geometry with inline
-// !important priority, then let the existing _showLive() restoration remove it.
 const enterPlayback=SightlineCard.prototype._enter;
 const showLive=SightlineCard.prototype._showLive;
-const renderTimeline=SightlineCard.prototype._renderTimeline;
 
 SightlineCard.prototype._enter=function(...args){
-  const fromGrid=this._viewMode==='grid';
-  const result=enterPlayback.apply(this,args);
-  const card=this.shadowRoot?.querySelector('.card');
-  const feed=this.shadowRoot?.querySelector('.workspace-feed');
-  const timeline=this.shadowRoot?.querySelector('.workspace-timeline');
-  const media=this.shadowRoot?.querySelector('.workspace-media');
-  const layout=this.shadowRoot?.querySelector('.layout');
-  const engWrap=this.shadowRoot?.querySelector('#eng-wrap');
-  const grid=this.shadowRoot?.querySelector('#cam-grid');
-
+  const fromGrid=this._viewMode==='grid',result=enterPlayback.apply(this,args);
+  const q=s=>this.shadowRoot?.querySelector(s),card=q('.card'),feed=q('.workspace-feed'),timeline=q('.workspace-timeline'),media=q('.workspace-media'),layout=q('.layout'),eng=q('#eng-wrap'),grid=q('#cam-grid');
   if(fromGrid){
     card?.classList.add('playback-fullcard');
     layout?.style.setProperty('grid-template-columns','minmax(0, 1fr)','important');
     layout?.style.setProperty('grid-template-areas','"feed"','important');
-    feed?.style.setProperty('grid-column','1 / -1','important');
-    feed?.style.setProperty('grid-row','1','important');
-    timeline?.style.setProperty('display','none','important');
-    media?.style.setProperty('display','none','important');
-    engWrap?.style.setProperty('display','block','important');
-    engWrap?.style.setProperty('width','100%','important');
-    engWrap?.style.setProperty('max-width','none','important');
+    feed?.style.setProperty('grid-column','1 / -1','important');feed?.style.setProperty('grid-row','1','important');
+    timeline?.style.setProperty('display','none','important');media?.style.setProperty('display','none','important');
+    eng?.style.setProperty('display','block','important');eng?.style.setProperty('width','100%','important');eng?.style.setProperty('max-width','none','important');
     grid?.style.setProperty('display','none','important');
   }
-
-  // The explicit playback return control should be easy to find without
-  // covering a large portion of the video, especially on laptop-sized cards.
-  const back=engWrap?.querySelector('#playback-back-live');
+  const back=eng?.querySelector('#playback-back-live');
   if(back){
-    back.style.setProperty('left','10px');
-    back.style.setProperty('top','10px');
-    back.style.setProperty('gap','5px');
-    back.style.setProperty('min-height','30px');
-    back.style.setProperty('padding','5px 9px');
-    back.style.setProperty('font-size','11px');
-    const icon=back.querySelector('svg');
-    if(icon){icon.style.width='13px';icon.style.height='13px';}
+    for(const [k,v] of [['left','10px'],['top','10px'],['gap','5px'],['min-height','30px'],['padding','5px 9px'],['font-size','11px']])back.style.setProperty(k,v);
+    const icon=back.querySelector('svg');if(icon){icon.style.width='13px';icon.style.height='13px';}
   }
   return result;
 };
@@ -10988,17 +10658,7 @@ SightlineCard.prototype._enter=function(...args){
 SightlineCard.prototype._showLive=function(...args){
   const result=showLive.apply(this,args);
   this.shadowRoot?.querySelector('.card')?.classList.remove('playback-fullcard');
-  // Re-run the responsive visibility pass after the high-priority playback
-  // overrides have been restored by the v1.1.0 wrapper.
   this._syncResponsiveWorkspace?.();
-  return result;
-};
-
-SightlineCard.prototype._renderTimeline=function(...args){
-  const result=renderTimeline.apply(this,args);
-  // Keep the calendar's visible date badge in lock-step with panning, scrubbing
-  // and recorded playback instead of updating it only when the picker closes.
-  this._updateTimelineDateLabel?.();
   return result;
 };
 
