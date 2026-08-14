@@ -1,8 +1,11 @@
-import { timelineInteractionMethods } from './timeline-interaction.js';
-import { recordingPlaybackMethods } from './recording-playback.js';
-import { liveMethods } from './live.js';
+/**
+ * Multiview recording session lifecycle and synchronized seek dispatch.
+ */
+import { timelineInteractionMethods } from '../timeline-interaction.js';
+import { recordingPlaybackMethods } from '../recording-playback.js';
+import { liveMethods } from '../live.js';
 
-export const multiRecordingControllerMethods = {
+export const multiviewControllerMethods = {
   _cancelMultiRecordingPlayback() {
     const session=this._multiPlaybackSession;
     if(!session)return;

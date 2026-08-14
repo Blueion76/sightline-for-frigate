@@ -1,3 +1,6 @@
+/**
+ * Recording download-range selection, validation and Frigate export requests.
+ */
 import { VERSION, CARD_TAG, DAY, DEFAULT_ROTATE_S, ICONS, LABEL_COLORS, PALETTE, TIMELINE_GLYPHS, CAM_COLORS } from '../constants.js';
 import { cap, parseWs, labelColor, timelineGlyph, mkCamState, camDisplayName } from '../helpers.js';
 import { STYLES } from '../styles.js';
@@ -119,7 +122,7 @@ async _downloadRecRange(dlStart, dlEnd) {
     const base = `/api/frigate/${encodeURIComponent(String(clientId))}/recording/${encodeURIComponent(String(cam))}/start/${start}/end/${end}`;
 
     // IMPORTANT: Home Assistant signs both the request path *and* all non-safe
-    // query parameters. v2.0.28 signed `base` and only then appended
+    // query parameters. An older implementation signed `base` and only then appended
     // `download=true`; current HA correctly rejects that as a tampered signed
     // request, causing the 401/error body to be saved with an .mp4 extension.
     // Build the final proxy request first, then sign that exact path.

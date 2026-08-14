@@ -1,3 +1,6 @@
+/**
+ * Home Assistant lifecycle, normalized configuration and shared card-level utilities.
+ */
 import { VERSION, CARD_TAG, DAY, DEFAULT_ROTATE_S, ICONS, LABEL_COLORS, PALETTE, TIMELINE_GLYPHS, CAM_COLORS } from '../constants.js';
 import { cap, parseWs, labelColor, timelineGlyph, mkCamState, camDisplayName } from '../helpers.js';
 import { STYLES } from '../styles.js';
@@ -147,6 +150,7 @@ disconnectedCallback() {
     clearTimeout(this._wt); clearTimeout(this._mediaPickerApplyTimer); clearTimeout(this._mediaPickerReleaseTimer);
     this._mediaPickerActive=false; this._mediaPickerActiveId=''; this._mediaPickerPendingFilterRender=false; this._removeLiveFsMirror();
     if (this._scrubAbort) { try { this._scrubAbort.abort(); } catch(_) {} this._scrubAbort=null; }
+    this._scrubTrack=null;
     if (this._scrollAbort) { try { this._scrollAbort.abort(); } catch(_) {} this._scrollAbort=null; }
     ++this._timelineLoadSeq; ++this._timelineDataSeq; ++this._timelineSeekSeq;
     if (this._unsub) { try { this._unsub.then(u=>u&&u()); } catch(_) {} this._unsub=null; }

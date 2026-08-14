@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const ux=fs.readFileSync(new URL('../src/card/multi-recording.js',import.meta.url),'utf8');
+const ux=fs.readFileSync(new URL('../src/card/multiview/timeline-ui.js',import.meta.url),'utf8');
 
 assert.ok(ux.includes('_timelineConfiguredPreviewHeight'),'Configured thumbnail height must drive timeline geometry');
 assert.ok(ux.includes('preview.style.top'),'Timeline preview top must be recalculated from its event timestamp');

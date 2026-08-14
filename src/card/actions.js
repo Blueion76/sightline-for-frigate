@@ -1,10 +1,22 @@
+/**
+ * User commands that change card state: navigation, retention, filters and calendar selection.
+ */
 import { VERSION, CARD_TAG, DAY, DEFAULT_ROTATE_S, ICONS, LABEL_COLORS, PALETTE, TIMELINE_GLYPHS, CAM_COLORS } from '../constants.js';
 import { cap, parseWs, labelColor, timelineGlyph, mkCamState, camDisplayName } from '../helpers.js';
 import { STYLES } from '../styles.js';
 
 // Prototype methods grouped by responsibility.
 export const actionMethods = {
-_goNow() { this._downloadRange=null; this._resetTimelineToNow10m(); this._loadWindow(true); this._renderTimeline(true); this._renderRange(); this._renderTimelineZoomLabel(); this._renderStreamCtrl(); },
+_goNow() {
+    this._downloadRange=null;
+    this._resetTimelineToNow10m();
+    this._loadWindow(true);
+    this._renderTimeline(true);
+    this._renderRange();
+    this._renderTimelineZoomLabel();
+    this._renderStreamCtrl();
+    this._updateTimelineDateLabel?.();
+  },
 
 _download(id,file) { const a=document.createElement('a'); a.href=this._media(id,file,true); a.download=`${this._cc().cam}_${id}_${file}`; document.body.appendChild(a); a.click(); a.remove(); },
 
@@ -125,7 +137,18 @@ _pickDay(ds) {
     this._renderTimeline(true);
     this._renderRange();
     this._renderTimelineZoomLabel();
+    this._updateTimelineDateLabel?.(ds);
     this._loadWindow(true);
+
+    // Calendar selection is a complete navigation action. Reuse the normal
+    // timeline seek path so single-camera and Multiview playback keep the same
+    // source selection, iOS handling, and synchronization semantics.
+    const target=Number(this._timelineFocusTs);
+    if(Number.isFinite(target) && typeof this._seekTimelineTarget==='function') {
+      Promise.resolve(this._seekTimelineTarget(target)).catch((error)=>{
+        console.warn('[Sightline] timeline calendar seek failed',error);
+      });
+    }
   },
 
 _renderCal() {

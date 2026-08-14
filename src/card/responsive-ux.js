@@ -1,14 +1,9 @@
+/**
+ * Responsive workspace policy and native timeline date-control integration.
+ */
 import { coreMethods } from './core.js';
 import { layoutMethods } from './layout.js';
 import { browserMethods } from './browser.js';
-
-function localDateValue(ts) {
-  const d=new Date(Number(ts||Date.now()/1000)*1000);
-  const y=d.getFullYear();
-  const m=String(d.getMonth()+1).padStart(2,'0');
-  const day=String(d.getDate()).padStart(2,'0');
-  return `${y}-${m}-${day}`;
-}
 
 function clearStyle(el, prop) {
   try { el?.style?.removeProperty?.(prop); } catch(_) {}
@@ -19,57 +14,6 @@ function setImportant(el, prop, value) {
 }
 
 export const responsiveUxMethods = {
-  _ensureTimelineNativeDateInput() {
-    const root=this.shadowRoot;
-    if(!root?.querySelector) return null;
-    let input=root.querySelector('#timeline-native-date');
-    if(input) return input;
-
-    input=document.createElement('input');
-    input.id='timeline-native-date';
-    input.type='date';
-    input.setAttribute('aria-label','Timeline date');
-    // Keep the control mounted and focusable so Safari/iOS can hand ownership
-    // to the native picker. display:none prevents showPicker()/click() on some
-    // WebKit builds, so park a 1px transparent input just outside the viewport.
-    input.style.cssText='position:fixed;left:-4px;top:-4px;width:1px;height:1px;opacity:.001;pointer-events:none;border:0;padding:0;margin:0;z-index:-1;';
-    input.addEventListener('change',()=>{
-      const value=input.value;
-      if(value) this._pickDay(value);
-      try { input.blur(); } catch(_) {}
-    });
-    root.appendChild(input);
-    return input;
-  },
-
-  _toggleCal() {
-    // Timeline calendar uses the same native system date control as the media
-    // browser. The old custom month grid remains in the DOM for compatibility
-    // with older CSS, but is never opened by this button anymore.
-    const oldPanel=this.shadowRoot?.querySelector?.('#cal-panel');
-    if(oldPanel) oldPanel.style.display='none';
-    const input=this._ensureTimelineNativeDateInput();
-    if(!input) return;
-
-    const focus=Number.isFinite(Number(this._timelineFocusTs))
-      ? Number(this._timelineFocusTs)
-      : (Number.isFinite(Number(this._winStart))&&Number.isFinite(Number(this._winEnd))
-        ? (Number(this._winStart)+Number(this._winEnd))/2
-        : Date.now()/1000);
-    input.value=localDateValue(focus);
-    input.max=localDateValue(Date.now()/1000);
-
-    // showPicker() keeps the native UI attached to this exact user gesture.
-    // click() is the fallback for Safari/WKWebView versions that expose date
-    // inputs but not showPicker().
-    try {
-      if(typeof input.showPicker==='function') input.showPicker();
-      else input.click();
-    } catch(_) {
-      try { input.click(); } catch(_) {}
-    }
-  },
-
   _measureResponsiveCardWidth() {
     const rect=Number(this.getBoundingClientRect?.().width||0);
     const client=Number(this.clientWidth||0);
@@ -81,6 +25,12 @@ export const responsiveUxMethods = {
   _syncResponsiveWorkspace() {
     const card=this.shadowRoot?.querySelector?.('.card');
     if(!card) return;
+
+    // Install the direct-hit native timeline date control during normal card
+    // reconciliation, before the user can tap it. Creating it only from the
+    // click handler is too late for iOS because the first gesture would still
+    // belong to the synthetic/programmatic path.
+    if(this._config?.timeline?.show_calendar_button!==false) this._ensureTimelineNativeDateInput?.();
 
     // Measure synchronously every time. The configured default gallery is
     // opened before ResizeObserver is installed during startup, so relying only
@@ -112,7 +62,12 @@ export const responsiveUxMethods = {
     const engWrap=this.shadowRoot.querySelector('#eng-wrap');
     const grid=this.shadowRoot.querySelector('#cam-grid');
 
-    const showTimeline=timelineEnabled && (!galleryOpen || split);
+    // Full-card playback owns the workspace until media is dismissed. A resize
+    // or HA dashboard reconciliation must not resurrect the normal timeline or
+    // media panes while playback-layout.js still exposes only the feed grid
+    // area. Doing so creates an implicit CSS-grid row/column that appears as a
+    // large blank region beside/below the clip on wide dashboards.
+    const showTimeline=!playbackFull && timelineEnabled && (!galleryOpen || split);
     if(showTimeline){
       clearStyle(timelineWrap,'display');
       clearStyle(timeline,'display');
@@ -121,7 +76,13 @@ export const responsiveUxMethods = {
       setImportant(timeline,'display','none');
     }
 
-    if(galleryOpen){
+    if(playbackFull){
+      setImportant(feed,'display','block');
+      setImportant(media,'display','none');
+      media?.setAttribute?.('aria-hidden','true');
+      setImportant(engWrap,'display','block');
+      setImportant(grid,'display','none');
+    } else if(galleryOpen){
       setImportant(media,'display',workstation || (split&&!timelineEnabled) ? 'flex' : 'block');
       media?.setAttribute?.('aria-hidden','false');
     } else {
@@ -143,7 +104,9 @@ export const responsiveUxMethods = {
 
     // Derive the grid from panes that actually exist. Hiding a disabled
     // timeline without changing grid-template-areas leaves an empty column;
-    // these templates eliminate that dead track entirely.
+    // these templates eliminate that dead track entirely. playback-fullcard is
+    // intentionally excluded because its single-pane template is owned by the
+    // playback layout and must survive responsive reconciliation unchanged.
     if(layout && !playbackFull){
       if(workstation){
         if(timelineEnabled && galleryOpen){
@@ -183,8 +146,12 @@ export const responsiveUxMethods = {
   },
 
   _syncMediaGalleryScroll() {
-    if(!this._galleryMode) return;
     const card=this.shadowRoot?.querySelector?.('.card');
+    // Media is deliberately absent from the full-card playback workspace. Do
+    // not let a stale gallery state reapply workstation height/flex rules while
+    // a clip is occupying the single playback pane.
+    if(card?.classList?.contains?.('playback-fullcard')) return;
+    if(!this._galleryMode) return;
     const media=this.shadowRoot?.querySelector?.('.workspace-media');
     const gallery=this.shadowRoot?.querySelector?.('#media-gallery');
     const grid=this.shadowRoot?.querySelector?.('.media-gallery-grid');
@@ -240,6 +207,14 @@ export const responsiveUxMethods = {
 
   _syncColHeight() {
     if(!this.shadowRoot?.querySelector) return;
+    const card=this.shadowRoot.querySelector('.card');
+    if(card?.classList?.contains?.('playback-fullcard')){
+      // The remembered live/grid column height belongs to Multiview, not to
+      // full-card playback. Leaving it set allows wide-pane sizing rules to
+      // preserve empty vertical space even after those panes are hidden.
+      card.style?.removeProperty?.('--workspace-column-h');
+      return;
+    }
     layoutMethods._syncColHeight.call(this);
     requestAnimationFrame(()=>this._syncMediaGalleryScroll());
   },

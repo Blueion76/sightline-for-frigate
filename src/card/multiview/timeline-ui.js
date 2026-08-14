@@ -1,13 +1,11 @@
-import { CAM_COLORS } from '../constants.js';
-import { cap, camDisplayName, timelineGlyph } from '../helpers.js';
-import { browserMethods } from './browser.js';
-import { downloadMethods } from './download.js';
-import { timelineRenderMethods } from './timeline-render.js';
-import { multiRecordingCoreMethods } from './multi-recording-core.js';
-import { multiRecordingPlayerMethods } from './multi-recording-player.js';
-import { multiRecordingControllerMethods } from './multi-recording-controller.js';
+/** Multiview timeline legend, preview geometry, and download-range UI. */
+import { CAM_COLORS } from '../../constants.js';
+import { cap, camDisplayName, timelineGlyph } from '../../helpers.js';
+import { browserMethods } from '../browser.js';
+import { downloadMethods } from '../download.js';
+import { timelineRenderMethods } from '../timeline-render.js';
 
-const timelineUxMethods={
+export const multiviewTimelineMethods = {
   _renderLegend() {
     const el=this._$('#legend');
     if(!el)return;
@@ -35,6 +33,15 @@ const timelineUxMethods={
   },
 
   _click(e) {
+    // A pointer drag that began on an event thumbnail produces a synthetic
+    // click on release in desktop browsers. Ignore only that short-lived click;
+    // ordinary event and timeline clicks continue through the normal handler.
+    if((this._timelineSuppressClickUntil||0)>performance.now() && e?.target?.closest?.('.t-preview,.t-ev,[data-tick]')) {
+      e.preventDefault?.();
+      e.stopPropagation?.();
+      return;
+    }
+
     const legend=e?.target?.closest?.('[data-legend-label]');
     if(legend){
       e.preventDefault?.();
@@ -77,6 +84,7 @@ const timelineUxMethods={
   _renderTimeline(...args) {
     const result=timelineRenderMethods._renderTimeline.apply(this,args);
     this._syncTimelinePreviewGeometry();
+    this._updateTimelineDateLabel?.();
     if(this._downloadRange){
       this._syncDownloadRangePickerDOM();
       this._wireDedicatedDownloadRangeDrag();
@@ -227,70 +235,3 @@ const timelineUxMethods={
     return result;
   }
 };
-
-const mediaBrowserFixMethods={
-  _mediaFilterValues() {
-    const values=browserMethods._mediaFilterValues.call(this);
-    if(this._eventsMode==='all'){
-      const cams=new Set(values.cams||[]);
-      for(const config of (this._config?.cameras||[])){
-        const cc=this._camCache?.[config.entity];
-        if(cc?.cam)cams.add(String(cc.cam));
-      }
-      values.cams=[...cams].sort((a,b)=>String(a).localeCompare(String(b)));
-    }
-    return values;
-  },
-
-  async _loadAllCamsBackground() {
-    const loadSeq=this._timelineLoadSeq;
-    const now=Math.floor(Date.now()/1000);
-    const isClipBrowser=this._eventsMode==='all'&&this._galleryMode==='clips';
-    const bounds=isClipBrowser ? this._mediaQueryBounds(now) : {start:this._winStart,end:this._winEnd};
-    const after=Math.max(0,Math.floor(Number(bounds?.start)||0));
-    const before=Math.max(after+1,Math.floor(Number(bounds?.end)||now));
-    const key=`${loadSeq}:${after}:${before}:${isClipBrowser?'clips':'timeline'}`;
-    if(this._allCamsBackgroundPromise&&this._allCamsBackgroundKey===key) return this._allCamsBackgroundPromise;
-
-    const task=(async()=>{
-      const others=(this._config?.cameras||[]).filter(c=>{
-        const cc=this._camCache?.[c.entity];
-        return c.entity!==this._activeCam?.entity&&cc?.discovered&&cc.clientId&&cc.cam;
-      });
-      await Promise.all(others.map(async c=>{
-        const cc=this._camCache[c.entity];
-        try{
-          const request={type:'frigate/events/get',instance_id:cc.clientId,cameras:[cc.cam],after,before,limit:isClipBrowser?500:200};
-          if(isClipBrowser)request.has_clip=true;
-          const ev=await this._ws(request);
-          cc.events=Array.isArray(ev)?ev:[];
-          this._mergeLoadedFilterMetadata(cc,cc.events,cc.reviews||[]);
-        }catch(_){}
-      }));
-      if(loadSeq!==this._timelineLoadSeq||this._eventsMode!=='all')return;
-      this._renderList();
-      if(isClipBrowser&&this._galleryMode==='clips')this._renderGallery();
-    })();
-
-    this._allCamsBackgroundKey=key;
-    this._allCamsBackgroundPromise=task;
-    try{return await task;}
-    finally{
-      if(this._allCamsBackgroundPromise===task){
-        this._allCamsBackgroundPromise=null;
-        this._allCamsBackgroundKey='';
-      }
-    }
-  },
-
-  async _setGalleryMode(tab) {
-    const result=await browserMethods._setGalleryMode.call(this,tab);
-    if(tab==='clips'&&this._galleryMode==='clips'&&this._eventsMode==='all'){
-      await this._loadAllCamsBackground();
-      if(this._galleryMode==='clips')this._renderGallery();
-    }
-    return result;
-  }
-};
-
-export const multiRecordingMethods=Object.assign({},multiRecordingCoreMethods,multiRecordingPlayerMethods,multiRecordingControllerMethods,timelineUxMethods,mediaBrowserFixMethods);

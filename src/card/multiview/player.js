@@ -1,6 +1,9 @@
-import { cap } from '../helpers.js';
+/**
+ * Per-camera Multiview recording player creation and decoder synchronization.
+ */
+import { cap } from '../../helpers.js';
 
-export const multiRecordingPlayerMethods = {
+export const multiviewPlayerMethods = {
   async _multiRecordingAttachPlayer(entry) {
     const session=entry.session;
     if(!session||session!==this._multiPlaybackSession||!entry.recordings.length)return;

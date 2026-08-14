@@ -157,7 +157,7 @@ export const STYLES = `
   #eng-wrap .live-fs-mirror{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:16;display:block;}
   /* iOS MediaStream video can freeze when Apple's native fullscreen compositor
      takes ownership of the element. Keep the live video inline and suppress the
-     native fullscreen affordance on direct go2rtc video. v2.0.26 also removes
+     native fullscreen affordance on direct go2rtc video. also removes
      this card's dedicated iOS fullscreen buttons entirely. */
   #engine>video::-webkit-media-controls-fullscreen-button{display:none!important;}
   #engine{position:absolute;inset:0;}
@@ -967,7 +967,7 @@ export const STYLES = `
 
 
 /* ─────────────────────────────────────────────────────────────
-   v2.0.0 — Editorial Black
+   Editorial Black
    Final visual layer only. Playback, Frigate queries, timeline math,
    microphone/talk, filters, camera switching and event handlers are unchanged.
    The UI intentionally avoids decorative gradients and excessive glass.
@@ -1313,7 +1313,7 @@ export const STYLES = `
   .card .media-gallery-grid .eact .ico:nth-child(n+3){display:none !important;}
 }
 
-/* v2.0.11 — lean timeline chrome + explicit recording gaps. */
+/* lean timeline chrome + explicit recording gaps. */
 .card .tl-head #tl-range{display:none !important;}
 .card .info-row,.card .latest{display:none !important;}
 .card .tl-head{justify-content:flex-end !important;}
