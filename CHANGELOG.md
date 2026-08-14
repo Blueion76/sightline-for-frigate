@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.5
+
+- Fixed the timeline date picker on iOS/Safari/WKWebView by making the user's tap land directly on a real `input[type="date"]` instead of forwarding the gesture to an offscreen input with `showPicker()`/`click()`.
+- The native date input now overlays the visible timeline calendar control while preserving the existing icon and styling.
+- The input is refreshed with the timeline's current focused date on pointer/touch/focus before WebKit opens the system picker, so it remains accurate after scrubbing.
+- Date changes still use the existing timeline navigation path, preserving zoom, midnight date-only behavior, and the stale-playback/timer protections from v1.1.2/v1.1.3.
+- Added regression coverage for the direct-hit iOS picker path and ensured the normal interaction does not depend on programmatic picker activation.
+
 ## 1.1.4
 
 - Replaced the timeline's custom calendar popover with the browser's native system date picker behavior.
