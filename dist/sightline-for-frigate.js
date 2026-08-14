@@ -1,9 +1,9 @@
-// Sightline for Frigate v1.1.4
+// Sightline for Frigate v1.1.5
 // Generated from src/ by scripts/build.mjs. Do not edit dist directly.
 
 // ── src/constants.js ──
 // Shared constants and icon definitions.
-const VERSION = '1.1.4';
+const VERSION = '1.1.5';
 
 const CARD_TAG = 'sightline-card';
 
@@ -10102,38 +10102,8 @@ function setImportant(el, prop, value) {
 }
 
 const responsiveUxMethods = {
-  _ensureTimelineNativeDateInput() {
-    const root=this.shadowRoot;
-    if(!root?.querySelector) return null;
-    let input=root.querySelector('#timeline-native-date');
-    if(input) return input;
-
-    input=document.createElement('input');
-    input.id='timeline-native-date';
-    input.type='date';
-    input.setAttribute('aria-label','Timeline date');
-    // Keep the control mounted and focusable so Safari/iOS can hand ownership
-    // to the native picker. display:none prevents showPicker()/click() on some
-    // WebKit builds, so park a 1px transparent input just outside the viewport.
-    input.style.cssText='position:fixed;left:-4px;top:-4px;width:1px;height:1px;opacity:.001;pointer-events:none;border:0;padding:0;margin:0;z-index:-1;';
-    input.addEventListener('change',()=>{
-      const value=input.value;
-      if(value) this._pickDay(value);
-      try { input.blur(); } catch(_) {}
-    });
-    root.appendChild(input);
-    return input;
-  },
-
-  _toggleCal() {
-    // Timeline calendar uses the same native system date control as the media
-    // browser. The old custom month grid remains in the DOM for compatibility
-    // with older CSS, but is never opened by this button anymore.
-    const oldPanel=this.shadowRoot?.querySelector?.('#cal-panel');
-    if(oldPanel) oldPanel.style.display='none';
-    const input=this._ensureTimelineNativeDateInput();
-    if(!input) return;
-
+  _prepareTimelineNativeDateInput(input) {
+    if(!input) return null;
     const focus=Number.isFinite(Number(this._timelineFocusTs))
       ? Number(this._timelineFocusTs)
       : (Number.isFinite(Number(this._winStart))&&Number.isFinite(Number(this._winEnd))
@@ -10141,10 +10111,71 @@ const responsiveUxMethods = {
         : Date.now()/1000);
     input.value=localDateValue(focus);
     input.max=localDateValue(Date.now()/1000);
+    return input;
+  },
 
-    // showPicker() keeps the native UI attached to this exact user gesture.
-    // click() is the fallback for Safari/WKWebView versions that expose date
-    // inputs but not showPicker().
+  _ensureTimelineNativeDateInput() {
+    const root=this.shadowRoot;
+    if(!root?.querySelector) return null;
+    let input=root.querySelector('#timeline-native-date');
+    if(input) return input;
+
+    const oldButton=root.querySelector('#cal-btn');
+    if(!oldButton?.parentNode) return null;
+
+    // iOS Safari/WKWebView does not reliably support programmatic showPicker()
+    // for date controls. Replace the visual button with an equivalent non-button
+    // host and put the REAL native date input directly over its full hit target.
+    // The user's finger therefore lands on <input type="date"> itself and
+    // WebKit owns the activation gesture from the beginning.
+    const host=document.createElement('span');
+    host.id='cal-btn';
+    host.className=oldButton.className || 'tool';
+    host.title=oldButton.title || 'Calendar';
+    host.style.position='relative';
+    host.innerHTML=oldButton.innerHTML;
+
+    input=document.createElement('input');
+    input.id='timeline-native-date';
+    input.type='date';
+    input.setAttribute('aria-label','Timeline date');
+    // Keep the native appearance semantics intact. The element is visually
+    // transparent, but it is real, sized, hit-testable, and receives the tap
+    // directly — exactly what iOS needs to present its system date wheel/sheet.
+    input.style.cssText='position:absolute;inset:0;width:100%;height:100%;min-width:100%;min-height:100%;opacity:0;pointer-events:auto;cursor:pointer;border:0;padding:0;margin:0;z-index:5;background:transparent;color:transparent;font-size:16px;';
+
+    const prepare=()=>this._prepareTimelineNativeDateInput(input);
+    // Prepare before WebKit performs the input's native default action. Do not
+    // preventDefault: doing so would suppress the iOS system date picker.
+    input.addEventListener('pointerdown',prepare,{capture:true,passive:true});
+    input.addEventListener('touchstart',prepare,{capture:true,passive:true});
+    input.addEventListener('focus',prepare,{passive:true});
+    // The card has delegated click/change handlers for other controls. Keep the
+    // native input's events from bubbling into #cal-btn and triggering the old
+    // programmatic picker path after iOS has already accepted the direct tap.
+    input.addEventListener('click',e=>e.stopPropagation());
+    input.addEventListener('change',e=>{
+      e.stopPropagation();
+      const value=input.value;
+      if(value) this._pickDay(value);
+      try { input.blur(); } catch(_) {}
+    });
+
+    host.appendChild(input);
+    oldButton.parentNode.replaceChild(host,oldButton);
+    this._prepareTimelineNativeDateInput(input);
+    return input;
+  },
+
+  _toggleCal() {
+    // Normal interaction is direct through the overlaid native input. Keep this
+    // path only as a desktop/keyboard fallback if a synthetic click reaches the
+    // visual host instead of the input itself.
+    const oldPanel=this.shadowRoot?.querySelector?.('#cal-panel');
+    if(oldPanel) oldPanel.style.display='none';
+    const input=this._ensureTimelineNativeDateInput();
+    if(!input) return;
+    this._prepareTimelineNativeDateInput(input);
     try {
       if(typeof input.showPicker==='function') input.showPicker();
       else input.click();
@@ -10164,6 +10195,12 @@ const responsiveUxMethods = {
   _syncResponsiveWorkspace() {
     const card=this.shadowRoot?.querySelector?.('.card');
     if(!card) return;
+
+    // Install the direct-hit native timeline date control during normal card
+    // reconciliation, before the user can tap it. Creating it only from the
+    // click handler is too late for iOS because the first gesture would still
+    // belong to the synthetic/programmatic path.
+    if(this._config?.timeline?.show_calendar_button!==false) this._ensureTimelineNativeDateInput?.();
 
     // Measure synchronously every time. The configured default gallery is
     // opened before ResizeObserver is installed during startup, so relying only
