@@ -1,0 +1,35 @@
+name: Wide Clips Multiview context verify
+on:
+  push:
+    branches:
+      - fix/ios-native-timeline-picker-v1.1.5
+    paths:
+      - scripts/tmp-fix-wide-clips-multiview-context.py
+      - .github/workflows/wide-clips-multiview-context-verify.yml
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/ios-native-timeline-picker-v1.1.5
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Apply playback-context fix
+        run: python scripts/tmp-fix-wide-clips-multiview-context.py
+      - run: npm ci
+      - run: npm run verify
+      - name: Commit verified fix and bundle
+        run: |
+          rm scripts/tmp-fix-wide-clips-multiview-context.py
+          rm .github/workflows/wide-clips-multiview-context-verify.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/card/ui/playback-layout.js tests/media-browser.mjs CHANGELOG.md dist/sightline-for-frigate.js scripts/tmp-fix-wide-clips-multiview-context.py .github/workflows/wide-clips-multiview-context-verify.yml
+          git commit -m "Fix wide Clips Multiview playback takeover"
+          git push
