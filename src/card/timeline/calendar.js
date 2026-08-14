@@ -7,11 +7,28 @@
  */
 import { formatLocalDateInput, localDateValue, parseLocalDateInput } from '../../utils/date.js';
 
+/**
+ * Convert initialized card timestamps to seconds since epoch.
+ *
+ * Card state deliberately starts with null/zero placeholders before Home
+ * Assistant calls `_start()`. JavaScript's `Number(null) === 0` would otherwise
+ * make those placeholders look like valid Unix-epoch timestamps and display
+ * Dec 31, 1969 in negative UTC offsets.
+ */
+function timelineTimestamp(value) {
+  if(value === null || value === undefined || value === '') return null;
+  const timestamp=Number(value);
+  return Number.isFinite(timestamp) && timestamp>0 ? timestamp : null;
+}
+
 function timelineDateFocus(card) {
-  if(Number.isFinite(Number(card._timelineFocusTs))) return Number(card._timelineFocusTs);
-  if(Number.isFinite(Number(card._winStart))&&Number.isFinite(Number(card._winEnd))) {
-    return (Number(card._winStart)+Number(card._winEnd))/2;
-  }
+  const focus=timelineTimestamp(card._timelineFocusTs);
+  if(focus!==null) return focus;
+
+  const start=timelineTimestamp(card._winStart);
+  const end=timelineTimestamp(card._winEnd);
+  if(start!==null && end!==null) return (start+end)/2;
+
   return Date.now()/1000;
 }
 
@@ -112,10 +129,11 @@ export const timelineCalendarMethods = {
     if(!host||!input) return;
 
     const explicit=typeof value==='string'?parseLocalDateInput(value)?.value:null;
-    const timestamp=Number(value);
+    const timestamp=timelineTimestamp(value);
+    const focusTimestamp=timelineTimestamp(this._timelineFocusTs);
     const selected=explicit
-      || (Number.isFinite(timestamp)?localDateValue(timestamp):null)
-      || (Number.isFinite(Number(this._timelineFocusTs))?localDateValue(this._timelineFocusTs):null)
+      || (timestamp!==null?localDateValue(timestamp):null)
+      || (focusTimestamp!==null?localDateValue(focusTimestamp):null)
       || parseLocalDateInput(input.value)?.value
       || localDateValue();
     const isToday=selected===localDateValue();
