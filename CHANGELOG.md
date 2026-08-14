@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.4
+
+- Replaced the timeline's custom calendar popover with the browser's native system date picker behavior.
+- Made Clips, Recordings, and Reviews lists responsive scroll containers on phone, tablet, and workstation layouts instead of forcing a fixed four-row height.
+- Fixed Clips/Recordings/Reviews as the configured default tab on wide dashboards so the Live pane is measured and kept mounted from the first paint.
+- Made workstation and medium-width layouts derive their grid columns from the panes that are actually enabled.
+- Disabling the timeline now removes the timeline column completely and lets Live and the media browser expand into the freed space instead of leaving a blank gap.
+- Added regression coverage for native timeline date selection, responsive media scrolling, Clips-first startup, and timeline-disabled layouts.
+
 ## 1.1.3
 
 - Fixed repeated timeline calendar navigation after scrubbing or recorded playback.
