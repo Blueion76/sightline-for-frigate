@@ -50,7 +50,7 @@ function workspace(width,{timeline=true,gallery='clips'}={}){
   const ctx={
     _cardWidth:0,
     _galleryMode:gallery,
-    _config:{timeline:{enabled:timeline},default_tab:'live'},
+    _config:{timeline:{enabled:timeline,show_calendar_button:true},default_tab:'live'},
     _viewMode:'single',
     _playing:null,
     _engine:{},
@@ -59,6 +59,7 @@ function workspace(width,{timeline=true,gallery='clips'}={}){
     getBoundingClientRect:()=>({width,height:600}),
     _isEditorPreview:()=>false,
     shadowRoot:{querySelector:sel=>map.get(sel)||null},
+    _ensureTimelineNativeDateInput:()=>null,
     _measureResponsiveCardWidth:responsiveUxMethods._measureResponsiveCardWidth,
     _syncMediaGalleryScroll:responsiveUxMethods._syncMediaGalleryScroll
   };
@@ -116,49 +117,73 @@ for(const mode of ['clips','recordings','reviews']){
   assert.equal(w.mediaGrid.style.getPropertyValue('-webkit-overflow-scrolling'),'touch');
 }
 
-// Timeline calendar button opens a real native date input instead of the
-// custom calendar grid and applies the selected value through _pickDay().
+// iOS must receive a direct native-input gesture. The visible calendar button
+// is replaced by an equivalent span host with a transparent input[type=date]
+// stretched over the entire hit target. No showPicker()/synthetic click is
+// required for the normal pointer/touch path.
 {
   const oldDocument=globalThis.document;
-  let created=null;
-  globalThis.document={
-    createElement(tag){
-      assert.equal(tag,'input');
-      const listeners={};
-      created={
-        id:'',type:'',value:'',max:'',style:{cssText:''},attrs:new Map(),showCount:0,blurCount:0,
-        setAttribute(name,value){this.attrs.set(name,String(value));},
-        addEventListener(name,fn){listeners[name]=fn;},
-        showPicker(){this.showCount++;},
-        click(){this.clickCount=(this.clickCount||0)+1;},
-        blur(){this.blurCount++;},
-        fire(name){listeners[name]?.({target:this});}
-      };
-      return created;
-    }
+  const listeners={};
+  let input=null;
+  let replacement=null;
+  const parent={
+    replaceChild(next,old){ replacement=next; next.parentNode=this; old.parentNode=null; }
   };
-  const panel={style:{display:'block'}};
+  const button={
+    id:'cal-btn',className:'tool',title:'Calendar',innerHTML:'CAL',parentNode:parent
+  };
+  function makeNode(tag){
+    const node={
+      tagName:String(tag).toUpperCase(),id:'',type:'',value:'',max:'',className:'',title:'',innerHTML:'',children:[],
+      style:{cssText:'',position:''},attrs:new Map(),parentNode:null,blurCount:0,showCount:0,clickCount:0,
+      setAttribute(name,value){this.attrs.set(name,String(value));},
+      appendChild(child){this.children.push(child);child.parentNode=this;},
+      addEventListener(name,fn){(listeners[name]??=[]).push(fn);},
+      showPicker(){this.showCount++;},click(){this.clickCount++;},blur(){this.blurCount++;},
+      fire(name,event={}){for(const fn of listeners[name]||[]) fn({target:this,stopPropagation(){event.stopped=true;},...event});}
+    };
+    if(tag==='input') input=node;
+    return node;
+  }
+  globalThis.document={createElement:makeNode};
   const root={
-    native:null,
-    querySelector(sel){ if(sel==='#cal-panel')return panel; if(sel==='#timeline-native-date')return this.native; return null; },
-    appendChild(node){ this.native=node; }
+    querySelector(sel){
+      if(sel==='#timeline-native-date') return replacement?.children?.find?.(x=>x.id==='timeline-native-date')||null;
+      if(sel==='#cal-btn') return replacement||button;
+      if(sel==='#cal-panel') return {style:{display:'block'}};
+      return null;
+    }
   };
   let picked='';
   const focus=Math.floor(new Date(2026,7,12,15,30,0,0).getTime()/1000);
   const ctx={
     shadowRoot:root,_timelineFocusTs:focus,_winStart:focus-300,_winEnd:focus+300,
-    _ensureTimelineNativeDateInput:responsiveUxMethods._ensureTimelineNativeDateInput,
+    _prepareTimelineNativeDateInput:responsiveUxMethods._prepareTimelineNativeDateInput,
     _pickDay:value=>{picked=value;}
   };
-  responsiveUxMethods._toggleCal.call(ctx);
-  assert.equal(panel.style.display,'none');
-  assert.equal(created.type,'date');
-  assert.equal(created.value,'2026-08-12');
-  assert.equal(created.showCount,1);
-  created.value='2026-08-09';
-  created.fire('change');
+  const native=responsiveUxMethods._ensureTimelineNativeDateInput.call(ctx);
+  assert.equal(native,input);
+  assert.equal(replacement.tagName,'SPAN');
+  assert.equal(replacement.id,'cal-btn');
+  assert.equal(native.type,'date');
+  assert.match(native.style.cssText,/inset:0/);
+  assert.match(native.style.cssText,/pointer-events:auto/);
+  assert.equal(native.showCount,0,'direct iOS path must not require showPicker()');
+  assert.equal(native.clickCount,0,'direct iOS path must not require synthetic click()');
+
+  // After the user scrubs, pointerdown/touchstart refreshes the date before
+  // WebKit performs the native input default action.
+  ctx._timelineFocusTs=Math.floor(new Date(2026,7,18,9,5,0,0).getTime()/1000);
+  native.fire('pointerdown');
+  assert.equal(native.value,'2026-08-18');
+  native.value='2026-08-09';
+  native.fire('change');
   assert.equal(picked,'2026-08-09');
-  assert.equal(created.blurCount,1);
+  assert.equal(native.blurCount,1);
+
+  const clickEvent={stopped:false};
+  native.fire('click',clickEvent);
+  assert.equal(clickEvent.stopped,true,'native input click must not bubble into the synthetic calendar handler');
   globalThis.document=oldDocument;
 }
 
