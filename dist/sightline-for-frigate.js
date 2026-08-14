@@ -1,9 +1,9 @@
-// Sightline for Frigate v1.1.1
+// Sightline for Frigate v1.1.2
 // Generated from src/ by scripts/build.mjs. Do not edit dist directly.
 
 // ── src/constants.js ──
 // Shared constants and icon definitions.
-const VERSION = '1.1.1';
+const VERSION = '1.1.2';
 
 const CARD_TAG = 'sightline-card';
 
@@ -7610,10 +7610,48 @@ _toggleCal() { const p=this.shadowRoot.querySelector('#cal-panel'); const open=p
 _calNav(d) { const m=this._calMonth||new Date(); m.setMonth(m.getMonth()+d); this._calMonth=new Date(m); this._renderCal(); },
 
 _pickDay(ds) {
-    const [y,mo,da]=ds.split('-').map(Number);
-    this._winStart=Math.floor(new Date(y,mo-1,da,0,0,0).getTime()/1000);
-    this._winEnd=Math.min(Math.floor(new Date(y,mo-1,da,23,59,59).getTime()/1000),Math.floor(Date.now()/1000));
-    this.shadowRoot.querySelector('#cal-panel').style.display='none'; this._loadWindow(true);
+    const [y,mo,da]=String(ds||'').split('-').map(Number);
+    if(!Number.isFinite(y)||!Number.isFinite(mo)||!Number.isFinite(da)) return;
+    const midnight=Math.floor(new Date(y,mo-1,da,0,0,0,0).getTime()/1000);
+    if(!Number.isFinite(midnight)) return;
+
+    // A calendar selection is a timeline translation, not a zoom command.
+    // Preserve the exact visible span the user currently chose and move that
+    // same viewport so its oldest edge begins at local midnight on the selected
+    // date. Previously this replaced the viewport with 00:00–23:59:59, which
+    // looked like the calendar merely zoomed the timeline out to 24 hours.
+    const currentSpan=Number(this._winEnd)-Number(this._winStart);
+    const fallbackSpan=typeof this._timelineDefaultSpanSeconds==='function'
+      ? Number(this._timelineDefaultSpanSeconds()) : 10*60;
+    const span=Number.isFinite(currentSpan)&&currentSpan>0 ? currentSpan : Math.max(1,fallbackSpan||10*60);
+
+    // Calendar navigation must also leave LIVE-follow mode. Otherwise the next
+    // moving-LIVE tick can immediately translate the newly selected historical
+    // date back toward now even though the calendar load itself succeeded.
+    clearTimeout(this._wt);
+    this._wt=null;
+    this._timelineInteracting=false;
+    this._timelineFollowingLive=false;
+    this._timelineWasLiveBeforeGesture=false;
+    this._timelineLiveCrossed=false;
+    this._scrubGestureInvalidated=false;
+    this._timelineSeekSeq=(Number(this._timelineSeekSeq)||0)+1;
+    this._timelineSelected=null;
+    this._downloadRange=null;
+
+    this._winStart=midnight;
+    this._winEnd=midnight+span;
+    this._timelineFocusTs=midnight+span/2;
+    this._scrubTarget=this._timelineFocusTs;
+    this._exhausted=false;
+    this._timelineDataDirty=true;
+
+    const panel=this.shadowRoot.querySelector('#cal-panel');
+    if(panel) panel.style.display='none';
+    this._renderTimeline(true);
+    this._renderRange();
+    this._renderTimelineZoomLabel();
+    this._loadWindow(true);
   },
 
 _renderCal() {
