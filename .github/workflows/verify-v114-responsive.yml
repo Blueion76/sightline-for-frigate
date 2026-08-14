@@ -1,0 +1,26 @@
+name: Verify v1.1.4 responsive UX fixes
+on:
+  push:
+    branches: [fix/native-picker-responsive-layout-v1.1.4]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/native-picker-responsive-layout-v1.1.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - run: npm run verify
+      - name: Commit rebuilt bundle
+        run: |
+          if git diff --quiet -- dist/sightline-for-frigate.js; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dist/sightline-for-frigate.js
+          git commit -m "Build v1.1.4 responsive UX fixes"
+          git push
