@@ -5,51 +5,85 @@
  * stable so existing card behavior and tests remain unchanged.
  */
 export const timelinePlaybackSyncMethods = {
-_updateTimelineScrubLabel(target) {
+  _updateTimelineScrubLabel(target) {
     const t=Math.max(0,Math.floor(Number(target)||0));
     if(!Number.isFinite(t)) return;
     const range=this._$('#tl-range');
     if(range) range.textContent=`${new Date(t*1000).toLocaleDateString([],{month:'short',day:'2-digit'}).toUpperCase()} · ${this._timeMinute(t)}`;
   },
 
-_updateTimelinePlaybackTime(ts) {
-    // Keep fractional media time internally so the scrubber is driven by the
-    // actual decoder clock rather than a once-per-second rounded value. The
-    // UI label is rounded only for display. This removes the occasional 1s
-    // (and, with HLS, sometimes 2s) apparent drift between the video and the
-    // timeline.
+  _updateTimelinePlaybackTime(ts) {
+    // Keep fractional media time internally so the timeline follows the actual
+    // decoder clock instead of a once-per-second rounded value. The label is
+    // rounded only for display.
     const t=Number(ts);
     if(!Number.isFinite(t) || t<0 || !this.isConnected) return;
+
+    const previousFocus=Number.isFinite(Number(this._timelineFocusTs))
+      ? Number(this._timelineFocusTs)
+      : t;
+    let start=Number(this._winStart);
+    let end=Number(this._winEnd);
+    const span=Math.max(1,end-start);
+
+    // The playhead is intentionally fixed at the visual center of the track.
+    // Therefore playback progress must translate the viewport by the same
+    // amount as the decoder clock. Previously only _timelineFocusTs changed,
+    // which let Chromium advance the HH:MM:SS pill while the scale, recording
+    // rail and detections remained at their old wall-clock positions until a
+    // later render happened.
+    if(!this._timelineFollowingLive && !this._timelineInteracting && Number.isFinite(start) && Number.isFinite(end)) {
+      const delta=t-previousFocus;
+      if(Math.abs(delta)>0.0001) {
+        start+=delta;
+        end+=delta;
+        if(start<0) {
+          end-=start;
+          start=0;
+        }
+        this._winStart=start;
+        this._winEnd=end;
+      }
+    }
+
     this._timelineFocusTs=t;
     this._scrubTarget=t;
     this._updateTimelineDateLabel?.(t);
+
     const track=this._$('#tl-track');
     if(!track) return;
-    const s=Number(this._winStart), e=Number(this._winEnd);
-    const span=Math.max(1,e-s);
-    const pct=Math.max(0,Math.min(100,50+((t-s)/span-0.5)*100));
+
+    const s=Number(this._winStart);
+    const e=Number(this._winEnd);
     const ph=track.querySelector('.tl-playhead');
     if(ph) {
-      // The playhead itself is fixed at 50% visually; its label is the current
-      // playback time. Keep the label updated even when video playback pauses.
       const label=ph.querySelector('span');
       if(label) label.textContent=this._timelineTime(Math.round(t));
     }
     const range=track.querySelector('#tl-range');
     if(range) range.textContent=`${new Date(t*1000).toLocaleDateString([],{month:'short',day:'2-digit'}).toUpperCase()} · ${this._timeMinute(Math.round(t))}`;
-    // If the media clock has moved outside the currently visible window,
-    // re-anchor the window around it without changing its zoom span. This is
-    // especially important when a player resumes after a long stall/rebuffer.
+
+    if(!this._timelineFollowingLive && !this._timelineInteracting) {
+      // Reposition existing timeline nodes immediately from the same media-clock
+      // sample. Reconciliation is throttled separately, so new/expired event
+      // nodes appear without rebuilding the whole timeline on every timeupdate.
+      this._updateTimelineLive?.();
+      this._reconcileTimelineDuringMove?.();
+      this._scheduleTimelineDynamicData?.('motion');
+    }
+
+    // Defensive recovery for discontinuities where the source jumps beyond the
+    // translated viewport (for example an HLS discontinuity or restored seek).
     if(t<s || t>e) {
       const half=span/2;
-      this._winStart=Math.max(0,Math.floor(t-half));
-      this._winEnd=Math.floor(t+half);
-      this._renderRange();
+      this._winStart=Math.max(0,t-half);
+      this._winEnd=this._winStart+span;
+      this._updateTimelineLive?.();
       this._renderTimeline(false);
     }
   },
 
-_wireTimelineMediaClock(video, originTs, token) {
+  _wireTimelineMediaClock(video, originTs, token) {
     if(!video || video.dataset.frigateTimelineClock==='1') return;
     video.dataset.frigateTimelineClock='1';
     // This clock is attached only to event clips. A clip has its own media-time
@@ -71,7 +105,7 @@ _wireTimelineMediaClock(video, originTs, token) {
     sync();
   },
 
-_attachTimelineMediaClock(player, originTs, token) {
+  _attachTimelineMediaClock(player, originTs, token) {
     let tries=0;
     const attach=()=>{
       if(token!=null && this._playSeq!==token) return;
@@ -82,7 +116,7 @@ _attachTimelineMediaClock(player, originTs, token) {
     attach();
   },
 
-async _seekTimelineTarget(target) {
+  async _seekTimelineTarget(target) {
     const t=Math.max(0,Math.floor(Number(target)));
     if(!Number.isFinite(t)) return;
     const seq=++this._timelineSeekSeq;
