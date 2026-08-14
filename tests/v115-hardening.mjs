@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {
   TIMELINE_SCALE_SECONDS,
   timelineScaleStep,
   timelineScaleLabel,
   v115HardeningMethods,
 } from '../src/card/v115-hardening.js';
+
+const multiRecordingInit=fs.readFileSync(new URL('../src/card/multi-recording-init.js',import.meta.url),'utf8');
+assert.ok(
+  multiRecordingInit.includes("event?.target?.closest?.('[data-legend-label]')") &&
+  multiRecordingInit.includes('multiRecordingMethods._click.call(this,event)'),
+  'v1.1.5 click hardening must preserve the existing timeline legend filter handler',
+);
 
 assert.deepEqual(
   [...TIMELINE_SCALE_SECONDS],
