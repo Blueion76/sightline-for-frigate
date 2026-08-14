@@ -3,8 +3,9 @@ import { applyMethodGroups } from '../utils/apply-method-groups.js';
 import { multiRecordingMethods } from './multi-recording.js';
 import { responsiveUxMethods } from './responsive-ux.js';
 import { iosTimelineDateMethods } from './ios-timeline-date.js';
+import { v115HardeningMethods } from './v115-hardening.js';
 
-applyMethodGroups(SightlineCard.prototype, multiRecordingMethods, responsiveUxMethods, iosTimelineDateMethods);
+applyMethodGroups(SightlineCard.prototype, multiRecordingMethods, responsiveUxMethods, iosTimelineDateMethods, v115HardeningMethods);
 
 // The v1.1.0 grid-playback wrapper used ordinary inline styles to collapse the
 // responsive desktop workspace. Workstation CSS intentionally uses !important,
