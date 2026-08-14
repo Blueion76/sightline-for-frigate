@@ -11232,7 +11232,12 @@ const responsiveUxMethods = {
     const engWrap=this.shadowRoot.querySelector('#eng-wrap');
     const grid=this.shadowRoot.querySelector('#cam-grid');
 
-    const showTimeline=timelineEnabled && (!galleryOpen || split);
+    // Full-card playback owns the workspace until media is dismissed. A resize
+    // or HA dashboard reconciliation must not resurrect the normal timeline or
+    // media panes while playback-layout.js still exposes only the feed grid
+    // area. Doing so creates an implicit CSS-grid row/column that appears as a
+    // large blank region beside/below the clip on wide dashboards.
+    const showTimeline=!playbackFull && timelineEnabled && (!galleryOpen || split);
     if(showTimeline){
       clearStyle(timelineWrap,'display');
       clearStyle(timeline,'display');
@@ -11241,7 +11246,13 @@ const responsiveUxMethods = {
       setImportant(timeline,'display','none');
     }
 
-    if(galleryOpen){
+    if(playbackFull){
+      setImportant(feed,'display','block');
+      setImportant(media,'display','none');
+      media?.setAttribute?.('aria-hidden','true');
+      setImportant(engWrap,'display','block');
+      setImportant(grid,'display','none');
+    } else if(galleryOpen){
       setImportant(media,'display',workstation || (split&&!timelineEnabled) ? 'flex' : 'block');
       media?.setAttribute?.('aria-hidden','false');
     } else {
@@ -11263,7 +11274,9 @@ const responsiveUxMethods = {
 
     // Derive the grid from panes that actually exist. Hiding a disabled
     // timeline without changing grid-template-areas leaves an empty column;
-    // these templates eliminate that dead track entirely.
+    // these templates eliminate that dead track entirely. playback-fullcard is
+    // intentionally excluded because its single-pane template is owned by the
+    // playback layout and must survive responsive reconciliation unchanged.
     if(layout && !playbackFull){
       if(workstation){
         if(timelineEnabled && galleryOpen){
@@ -11303,8 +11316,12 @@ const responsiveUxMethods = {
   },
 
   _syncMediaGalleryScroll() {
-    if(!this._galleryMode) return;
     const card=this.shadowRoot?.querySelector?.('.card');
+    // Media is deliberately absent from the full-card playback workspace. Do
+    // not let a stale gallery state reapply workstation height/flex rules while
+    // a clip is occupying the single playback pane.
+    if(card?.classList?.contains?.('playback-fullcard')) return;
+    if(!this._galleryMode) return;
     const media=this.shadowRoot?.querySelector?.('.workspace-media');
     const gallery=this.shadowRoot?.querySelector?.('#media-gallery');
     const grid=this.shadowRoot?.querySelector?.('.media-gallery-grid');
@@ -11360,6 +11377,14 @@ const responsiveUxMethods = {
 
   _syncColHeight() {
     if(!this.shadowRoot?.querySelector) return;
+    const card=this.shadowRoot.querySelector('.card');
+    if(card?.classList?.contains?.('playback-fullcard')){
+      // The remembered live/grid column height belongs to Multiview, not to
+      // full-card playback. Leaving it set allows wide-pane sizing rules to
+      // preserve empty vertical space even after those panes are hidden.
+      card.style?.removeProperty?.('--workspace-column-h');
+      return;
+    }
     layoutMethods._syncColHeight.call(this);
     requestAnimationFrame(()=>this._syncMediaGalleryScroll());
   },
@@ -11435,6 +11460,7 @@ function queryPlaybackWorkspace(card) {
     layout: query('.layout'),
     engine: query('#eng-wrap'),
     grid: query('#cam-grid'),
+    camSwitcher: query('#cam-switcher'),
   };
 }
 
@@ -11484,27 +11510,50 @@ const playbackLayoutMethods = {
 
     if(returnToGrid) {
       workspace.card?.classList.add('playback-fullcard');
+      saveStyle(workspace.card,'playbackColumnHeight','--workspace-column-h');
+      saveStyle(workspace.layout,'playbackDisplay','display');
       saveStyle(workspace.layout,'playbackGridColumns','grid-template-columns');
       saveStyle(workspace.layout,'playbackGridAreas','grid-template-areas');
+      saveStyle(workspace.feed,'playbackDisplay','display');
       saveStyle(workspace.feed,'playbackGridColumn','grid-column');
       saveStyle(workspace.feed,'playbackGridRow','grid-row');
+      saveStyle(workspace.feed,'playbackWidth','width');
+      saveStyle(workspace.feed,'playbackHeight','height');
+      saveStyle(workspace.feed,'playbackMinHeight','min-height');
+      saveStyle(workspace.feed,'playbackMaxHeight','max-height');
       saveStyle(workspace.timeline,'playbackDisplay','display');
       saveStyle(workspace.media,'playbackDisplay','display');
       saveStyle(workspace.engine,'playbackDisplay','display');
       saveStyle(workspace.engine,'playbackWidth','width');
       saveStyle(workspace.engine,'playbackMaxWidth','max-width');
       saveStyle(workspace.grid,'playbackDisplay','display');
+      saveStyle(workspace.camSwitcher,'playbackDisplay','display');
 
+      // Multiview synchronizes timeline/media heights to the live grid column.
+      // That measurement is meaningless once playback becomes a single pane and
+      // was responsible for preserving a large empty area on wide dashboards.
+      workspace.card?.style.removeProperty('--workspace-column-h');
+
+      // Use a true one-pane flow instead of leaving a CSS Grid with hidden
+      // workstation children. This also prevents an accidental responsive
+      // re-show from creating an implicit grid track beside/below playback.
+      workspace.layout?.style.setProperty('display','block','important');
       workspace.layout?.style.setProperty('grid-template-columns','minmax(0, 1fr)','important');
       workspace.layout?.style.setProperty('grid-template-areas','"feed"','important');
+      workspace.feed?.style.setProperty('display','block','important');
       workspace.feed?.style.setProperty('grid-column','1 / -1','important');
       workspace.feed?.style.setProperty('grid-row','1','important');
+      workspace.feed?.style.setProperty('width','100%','important');
+      workspace.feed?.style.setProperty('height','auto','important');
+      workspace.feed?.style.setProperty('min-height','0','important');
+      workspace.feed?.style.setProperty('max-height','none','important');
       workspace.timeline?.style.setProperty('display','none','important');
       workspace.media?.style.setProperty('display','none','important');
       workspace.engine?.style.setProperty('display','block','important');
       workspace.engine?.style.setProperty('width','100%','important');
       workspace.engine?.style.setProperty('max-width','none','important');
       workspace.grid?.style.setProperty('display','none','important');
+      workspace.camSwitcher?.style.setProperty('display','none','important');
     }
 
     showPlaybackReturnButton(this,workspace.engine,returnToGrid);
@@ -11526,16 +11575,24 @@ const playbackLayoutMethods = {
       back.style.display='none';
     }
     workspace.card?.classList.remove('playback-fullcard');
+    restoreStyle(workspace.card,'playbackColumnHeight','--workspace-column-h');
+    restoreStyle(workspace.layout,'playbackDisplay','display');
     restoreStyle(workspace.layout,'playbackGridColumns','grid-template-columns');
     restoreStyle(workspace.layout,'playbackGridAreas','grid-template-areas');
+    restoreStyle(workspace.feed,'playbackDisplay','display');
     restoreStyle(workspace.feed,'playbackGridColumn','grid-column');
     restoreStyle(workspace.feed,'playbackGridRow','grid-row');
+    restoreStyle(workspace.feed,'playbackWidth','width');
+    restoreStyle(workspace.feed,'playbackHeight','height');
+    restoreStyle(workspace.feed,'playbackMinHeight','min-height');
+    restoreStyle(workspace.feed,'playbackMaxHeight','max-height');
     restoreStyle(workspace.timeline,'playbackDisplay','display');
     restoreStyle(workspace.media,'playbackDisplay','display');
     restoreStyle(workspace.engine,'playbackDisplay','display');
     restoreStyle(workspace.engine,'playbackWidth','width');
     restoreStyle(workspace.engine,'playbackMaxWidth','max-width');
     restoreStyle(workspace.grid,'playbackDisplay','display');
+    restoreStyle(workspace.camSwitcher,'playbackDisplay','display');
 
     if(returnToGrid) {
       if(workspace.engine) workspace.engine.style.display='none';
@@ -11549,6 +11606,10 @@ const playbackLayoutMethods = {
     // cross a card/layout lifecycle boundary in desktop Home Assistant. Refresh
     // the complete scrub binding set only when actually returning from media.
     if(returningFromPlayback) this._refreshTimelineInteractionWiring?.(true);
+    // Re-measure the restored grid/timeline only after normal responsive
+    // visibility is back. This prevents the playback player's height from being
+    // reused as the next Multiview synchronized-column height.
+    if(returnToGrid) requestAnimationFrame(()=>this._syncColHeight?.());
     return result;
   },
 };

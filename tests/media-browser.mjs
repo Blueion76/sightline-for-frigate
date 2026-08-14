@@ -17,6 +17,9 @@ assert.match(ux,/await this\._loadAllCamsBackground\(\)/,'Opening Multiview Clip
 assert.match(layout,/grid-template-columns/,'Desktop grid clip playback must override the responsive workstation columns');
 assert.match(layout,/setProperty\('display','none','important'\)/,'Desktop grid clip playback must hide secondary panes with important priority');
 assert.match(layout,/playback-fullcard/,'Full-card recorded playback must have an explicit state marker');
+assert.match(layout,/playbackColumnHeight/,'Full-card playback must save and clear the synchronized Multiview column height');
+assert.match(layout,/setProperty\('display','block','important'\)/,'Full-card playback must collapse the workstation CSS grid to one block-level feed');
+assert.match(layout,/camSwitcher/,'Full-card playback must hide and restore the unused Multiview camera switcher');
 assert.match(layout,/min-height/,'Playback return button should use compact sizing');
 assert.match(layout,/min-height:30px/,'Playback return button should be reduced from the v1.1.0 size');
 

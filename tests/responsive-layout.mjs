@@ -118,6 +118,33 @@ for(const mode of ['clips','recordings','reviews']){
   assert.equal(w.mediaGrid.style.getPropertyValue('-webkit-overflow-scrolling'),'touch');
 }
 
+// Full-card playback is a hard responsive visibility state. A workstation
+// resize/reconcile must not resurrect timeline/media panes into the one-area
+// playback layout or preserve the old synchronized Multiview column height.
+{
+  const w=workspace(1400,{timeline:true,gallery:'clips'});
+  w.card.classList.add('playback-fullcard');
+  w.layout.style.setProperty('display','block','important');
+  w.layout.style.setProperty('grid-template-areas','"feed"','important');
+  w.timelineWrap.style.setProperty('display','none','important');
+  w.timelineView.style.setProperty('display','none','important');
+  w.media.style.setProperty('display','none','important');
+  w.card.style.setProperty('--workspace-column-h','812px');
+
+  responsiveUxMethods._syncResponsiveWorkspace.call(w.ctx);
+  assert.equal(w.card.classList.contains('workstation'),true);
+  assert.equal(w.layout.style.getPropertyValue('grid-template-areas'),'"feed"','responsive reconciliation must preserve the playback-only grid');
+  assert.equal(w.timelineWrap.style.getPropertyValue('display'),'none','timeline wrapper must remain hidden during playback');
+  assert.equal(w.timelineView.style.getPropertyValue('display'),'none','timeline view must remain hidden during playback');
+  assert.equal(w.media.style.getPropertyValue('display'),'none','media pane must remain hidden during playback');
+  assert.equal(w.media.getAttribute('aria-hidden'),'true');
+  assert.equal(w.engWrap.style.getPropertyValue('display'),'block','recorded player wrapper must stay visible');
+  assert.equal(w.camGrid.style.getPropertyValue('display'),'none','Multiview grid must stay hidden during full-card playback');
+
+  responsiveUxMethods._syncColHeight.call(w.ctx);
+  assert.equal(w.card.style.getPropertyValue('--workspace-column-h'),'','full-card playback must drop the stale Multiview column height');
+}
+
 // iOS must receive a direct native-input gesture. The visible calendar button
 // is replaced by an equivalent span host with a transparent input[type=date]
 // stretched over the entire hit target. No showPicker()/synthetic click is
