@@ -21,7 +21,7 @@ function setImportant(el, prop, value) {
 export const responsiveUxMethods = {
   _ensureTimelineNativeDateInput() {
     const root=this.shadowRoot;
-    if(!root) return null;
+    if(!root?.querySelector) return null;
     let input=root.querySelector('#timeline-native-date');
     if(input) return input;
 
@@ -239,6 +239,7 @@ export const responsiveUxMethods = {
   },
 
   _syncColHeight() {
+    if(!this.shadowRoot?.querySelector) return;
     layoutMethods._syncColHeight.call(this);
     requestAnimationFrame(()=>this._syncMediaGalleryScroll());
   },
