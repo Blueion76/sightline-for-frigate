@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.3
+
+- Fixed repeated timeline calendar navigation after scrubbing or recorded playback.
+- Date selection now cancels stale wheel-settle/data timers and invalidates in-flight timeline loads before applying the new date.
+- Active single-camera and synchronized Multiview recording clocks are stopped before a calendar jump so they cannot move the timeline back to the previous scrub position.
+- Added regression coverage for selecting multiple dates after scrubbing while preserving the current zoom level.
+
 ## 1.1.2
 
 - Fixed timeline calendar date selection so it preserves the current timeline zoom/span instead of expanding the viewport to the full selected day.
