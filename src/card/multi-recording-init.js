@@ -7,6 +7,18 @@ import { v115HardeningMethods } from './v115-hardening.js';
 
 applyMethodGroups(SightlineCard.prototype, multiRecordingMethods, responsiveUxMethods, iosTimelineDateMethods, v115HardeningMethods);
 
+// v1.1.5's hardening click layer owns the new live-audio control and the
+// post-drag click suppression. The existing multi-recording click layer owns
+// timeline legend filtering. Preserve both parts of the click chain instead of
+// letting the hardening layer skip directly to browserMethods._click().
+const hardenedClick=SightlineCard.prototype._click;
+SightlineCard.prototype._click=function(event){
+  if(event?.target?.closest?.('[data-legend-label]')){
+    return multiRecordingMethods._click.call(this,event);
+  }
+  return hardenedClick.call(this,event);
+};
+
 // The v1.1.0 grid-playback wrapper used ordinary inline styles to collapse the
 // responsive desktop workspace. Workstation CSS intentionally uses !important,
 // so those declarations could win and leave a clip squeezed beside the hidden
