@@ -81,4 +81,65 @@ function makeDateLabelDom() {
   assert.ok(loaded>=1);
 }
 
-console.log('iOS timeline date selection regression test passed.');
+// A mouse click on the transparent native input must explicitly open Chromium's
+// date picker, while touch keeps the direct iOS/WebKit native-default path.
+{
+  const oldDocument=globalThis.document;
+  let replacedHost=null;
+  let showPickerCalls=0;
+
+  const makeSpan=()=>({
+    id:'',className:'',title:'',innerHTML:'',textContent:'',style:{},children:[],classList:new ClassListMock(),
+    attrs:new Map(),
+    setAttribute(name,value){this.attrs.set(name,String(value));},
+    appendChild(child){this.children.push(child);child.parentElement=this;},
+    querySelector(selector){return selector==='.timeline-date-label'?this.children.find(child=>child.className==='timeline-date-label')||null:null;},
+  });
+  const makeInput=()=>({
+    id:'',type:'',value:'',max:'',style:{},listeners:{},attrs:new Map(),
+    setAttribute(name,value){this.attrs.set(name,String(value));},
+    addEventListener(name,handler){this.listeners[name]=handler;},
+    showPicker(){showPickerCalls++;},
+    blur(){},
+  });
+
+  const oldButton=makeSpan();
+  oldButton.id='cal-btn';
+  oldButton.className='tool';
+  oldButton.title='Calendar';
+  oldButton.parentNode={replaceChild(host){replacedHost=host;}};
+
+  globalThis.document={
+    createElement(tag){return tag==='input'?makeInput():makeSpan();},
+  };
+
+  const root={
+    querySelector(selector){
+      if(selector==='#cal-btn') return replacedHost||oldButton;
+      if(selector==='#timeline-native-date') return replacedHost?.children.find(child=>child.id==='timeline-native-date')||null;
+      if(selector==='#cal-panel') return {style:{display:'none'}};
+      return null;
+    },
+  };
+  const ctx={
+    shadowRoot:root,
+    _timelineFocusTs:+new Date(2026,7,14,15,30)/1000,
+    _pickDay(){},
+    _updateTimelineDateLabel(value){timelineCalendarMethods._updateTimelineDateLabel.call(this,value);},
+  };
+
+  const input=timelineCalendarMethods._ensureTimelineNativeDateInput.call(ctx);
+  assert.ok(input);
+  input.listeners.pointerdown({pointerType:'mouse'});
+  input.listeners.click({stopPropagation(){}});
+  assert.equal(showPickerCalls,1,'desktop trusted click should call showPicker()');
+
+  showPickerCalls=0;
+  input.listeners.pointerdown({pointerType:'touch'});
+  input.listeners.touchstart();
+  input.listeners.click({stopPropagation(){}});
+  assert.equal(showPickerCalls,0,'touch should keep the direct native input activation path');
+  globalThis.document=oldDocument;
+}
+
+console.log('timeline date selection regression tests passed.');
