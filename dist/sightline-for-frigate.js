@@ -1,9 +1,9 @@
-// Sightline for Frigate v1.1.0
+// Sightline for Frigate v1.1.1
 // Generated from src/ by scripts/build.mjs. Do not edit dist directly.
 
 // ── src/constants.js ──
 // Shared constants and icon definitions.
-const VERSION = '1.1.0';
+const VERSION = '1.1.1';
 
 const CARD_TAG = 'sightline-card';
 
@@ -9797,10 +9797,6 @@ const timelineUxMethods={
       preview.style.setProperty('width',`min(${w}px, calc(100% - var(--tl-content) - 10px))`,'important');
       preview.style.setProperty('max-width',`${w}px`,'important');
       if(Number.isFinite(ts)){
-        // The detection row is anchored at yPct(ts). Center the preview on the
-        // exact same pixel, using the configured height as the authoritative
-        // geometry. This prevents the connector from drifting when the user
-        // changes timeline.thumbnail_size.
         const center=(yPct(ts)/100)*trackPx;
         preview.style.top=`${center-h/2}px`;
       }
@@ -9838,8 +9834,6 @@ const timelineUxMethods={
     const focus=Number.isFinite(Number(this._timelineFocusTs))
       ? Number(this._timelineFocusTs)
       : (Number(this._winStart)+Number(this._winEnd))/2;
-    // Exact inverse of timeline-render.js yPct():
-    // y = 50 + ((focus - ts) / span) * 100
     return focus+(0.5-ratio)*span;
   },
 
@@ -9914,8 +9908,6 @@ const timelineUxMethods={
     root.addEventListener('pointercancel',endPointer,{capture:true,passive:false});
     root.addEventListener('lostpointercapture',e=>{if(pointerId!=null&&e.pointerId===pointerId)finish();},{capture:true});
 
-    // WKWebView fallback. Some iOS versions expose PointerEvent but can still
-    // fail to deliver a complete pointer sequence through nested Shadow DOM.
     root.addEventListener('touchstart',e=>{
       if(pointerId!=null||kind||isActionTarget(e.target)||!e.changedTouches?.length)return;
       const touch=e.changedTouches[0];
@@ -9943,7 +9935,6 @@ const timelineUxMethods={
     root.addEventListener('touchend',endTouch,{capture:true,passive:false});
     root.addEventListener('touchcancel',endTouch,{capture:true,passive:false});
 
-    // Mouse fallback for browsers without Pointer Events.
     root.addEventListener('mousedown',e=>{
       if('PointerEvent' in window||e.button!==0||isActionTarget(e.target))return;
       if(!start(e.target,e.clientY))return;
@@ -9966,7 +9957,72 @@ const timelineUxMethods={
   }
 };
 
-const multiRecordingMethods=Object.assign({},multiRecordingCoreMethods,multiRecordingPlayerMethods,multiRecordingControllerMethods,timelineUxMethods);
+const mediaBrowserFixMethods={
+  _mediaFilterValues() {
+    const values=browserMethods._mediaFilterValues.call(this);
+    if(this._eventsMode==='all'){
+      const cams=new Set(values.cams||[]);
+      for(const config of (this._config?.cameras||[])){
+        const cc=this._camCache?.[config.entity];
+        if(cc?.cam)cams.add(String(cc.cam));
+      }
+      values.cams=[...cams].sort((a,b)=>String(a).localeCompare(String(b)));
+    }
+    return values;
+  },
+
+  async _loadAllCamsBackground() {
+    const loadSeq=this._timelineLoadSeq;
+    const now=Math.floor(Date.now()/1000);
+    const isClipBrowser=this._eventsMode==='all'&&this._galleryMode==='clips';
+    const bounds=isClipBrowser ? this._mediaQueryBounds(now) : {start:this._winStart,end:this._winEnd};
+    const after=Math.max(0,Math.floor(Number(bounds?.start)||0));
+    const before=Math.max(after+1,Math.floor(Number(bounds?.end)||now));
+    const key=`${loadSeq}:${after}:${before}:${isClipBrowser?'clips':'timeline'}`;
+    if(this._allCamsBackgroundPromise&&this._allCamsBackgroundKey===key) return this._allCamsBackgroundPromise;
+
+    const task=(async()=>{
+      const others=(this._config?.cameras||[]).filter(c=>{
+        const cc=this._camCache?.[c.entity];
+        return c.entity!==this._activeCam?.entity&&cc?.discovered&&cc.clientId&&cc.cam;
+      });
+      await Promise.all(others.map(async c=>{
+        const cc=this._camCache[c.entity];
+        try{
+          const request={type:'frigate/events/get',instance_id:cc.clientId,cameras:[cc.cam],after,before,limit:isClipBrowser?500:200};
+          if(isClipBrowser)request.has_clip=true;
+          const ev=await this._ws(request);
+          cc.events=Array.isArray(ev)?ev:[];
+          this._mergeLoadedFilterMetadata(cc,cc.events,cc.reviews||[]);
+        }catch(_){}
+      }));
+      if(loadSeq!==this._timelineLoadSeq||this._eventsMode!=='all')return;
+      this._renderList();
+      if(isClipBrowser&&this._galleryMode==='clips')this._renderGallery();
+    })();
+
+    this._allCamsBackgroundKey=key;
+    this._allCamsBackgroundPromise=task;
+    try{return await task;}
+    finally{
+      if(this._allCamsBackgroundPromise===task){
+        this._allCamsBackgroundPromise=null;
+        this._allCamsBackgroundKey='';
+      }
+    }
+  },
+
+  async _setGalleryMode(tab) {
+    const result=await browserMethods._setGalleryMode.call(this,tab);
+    if(tab==='clips'&&this._galleryMode==='clips'&&this._eventsMode==='all'){
+      await this._loadAllCamsBackground();
+      if(this._galleryMode==='clips')this._renderGallery();
+    }
+    return result;
+  }
+};
+
+const multiRecordingMethods=Object.assign({},multiRecordingCoreMethods,multiRecordingPlayerMethods,multiRecordingControllerMethods,timelineUxMethods,mediaBrowserFixMethods);
 
 // ── src/card/SightlineCard.js ──
 class SightlineCard extends HTMLElement {
@@ -10042,7 +10098,64 @@ SightlineCard.prototype._renderTimeline = function(...args) {
 
 // ── src/card/multi-recording-init.js ──
 applyMethodGroups(SightlineCard.prototype, multiRecordingMethods);
-// Timeline UX fixes are applied below this hook.
+
+// The v1.1.0 grid-playback wrapper used ordinary inline styles to collapse the
+// responsive desktop workspace. Workstation CSS intentionally uses !important,
+// so those declarations could win and leave a clip squeezed beside the hidden
+// timeline/browser columns. Reassert the playback geometry with inline
+// !important priority, then let the existing _showLive() restoration remove it.
+const enterPlayback=SightlineCard.prototype._enter;
+const showLive=SightlineCard.prototype._showLive;
+
+SightlineCard.prototype._enter=function(...args){
+  const fromGrid=this._viewMode==='grid';
+  const result=enterPlayback.apply(this,args);
+  const card=this.shadowRoot?.querySelector('.card');
+  const feed=this.shadowRoot?.querySelector('.workspace-feed');
+  const timeline=this.shadowRoot?.querySelector('.workspace-timeline');
+  const media=this.shadowRoot?.querySelector('.workspace-media');
+  const layout=this.shadowRoot?.querySelector('.layout');
+  const engWrap=this.shadowRoot?.querySelector('#eng-wrap');
+  const grid=this.shadowRoot?.querySelector('#cam-grid');
+
+  if(fromGrid){
+    card?.classList.add('playback-fullcard');
+    layout?.style.setProperty('grid-template-columns','minmax(0, 1fr)','important');
+    layout?.style.setProperty('grid-template-areas','"feed"','important');
+    feed?.style.setProperty('grid-column','1 / -1','important');
+    feed?.style.setProperty('grid-row','1','important');
+    timeline?.style.setProperty('display','none','important');
+    media?.style.setProperty('display','none','important');
+    engWrap?.style.setProperty('display','block','important');
+    engWrap?.style.setProperty('width','100%','important');
+    engWrap?.style.setProperty('max-width','none','important');
+    grid?.style.setProperty('display','none','important');
+  }
+
+  // The explicit playback return control should be easy to find without
+  // covering a large portion of the video, especially on laptop-sized cards.
+  const back=engWrap?.querySelector('#playback-back-live');
+  if(back){
+    back.style.setProperty('left','10px');
+    back.style.setProperty('top','10px');
+    back.style.setProperty('gap','5px');
+    back.style.setProperty('min-height','30px');
+    back.style.setProperty('padding','5px 9px');
+    back.style.setProperty('font-size','11px');
+    const icon=back.querySelector('svg');
+    if(icon){icon.style.width='13px';icon.style.height='13px';}
+  }
+  return result;
+};
+
+SightlineCard.prototype._showLive=function(...args){
+  const result=showLive.apply(this,args);
+  this.shadowRoot?.querySelector('.card')?.classList.remove('playback-fullcard');
+  // Re-run the responsive visibility pass after the high-priority playback
+  // overrides have been restored by the v1.1.0 wrapper.
+  this._syncResponsiveWorkspace?.();
+  return result;
+};
 
 // ── src/editor/methods.js ──
 // Visual editor behavior.
