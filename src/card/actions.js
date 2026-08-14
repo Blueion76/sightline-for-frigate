@@ -4,7 +4,7 @@ import { STYLES } from '../styles.js';
 
 // Prototype methods grouped by responsibility.
 export const actionMethods = {
-_goNow() { this._downloadRange=null; this._resetTimelineToNow10m(); this._loadWindow(true); this._renderTimeline(true); this._renderRange(); this._renderTimelineZoomLabel(); this._renderStreamCtrl(); },
+_goNow() { this._downloadRange=null; this._resetTimelineToNow10m(); this._syncCalendarButtonDate?.(Math.floor(Date.now()/1000)); this._loadWindow(true); this._renderTimeline(true); this._renderRange(); this._renderTimelineZoomLabel(); this._renderStreamCtrl(); },
 
 _download(id,file) { const a=document.createElement('a'); a.href=this._media(id,file,true); a.download=`${this._cc().cam}_${id}_${file}`; document.body.appendChild(a); a.click(); a.remove(); },
 
@@ -57,9 +57,38 @@ _toast(msg,ms=3500) {
 
 _toggleFilter() { const p=this.shadowRoot.querySelector('#filter-panel'); const open=p.style.display==='none'; this.shadowRoot.querySelector('#cal-panel').style.display='none'; p.style.display=open?'block':'none'; if(open){ this._mergeLoadedFilterMetadata(this._cc(),this._events,this._reviews); this._loadFrigateFilterMetadata(); this._renderFilter(); } },
 
-_toggleCal() { const p=this.shadowRoot.querySelector('#cal-panel'); const open=p.style.display==='none'; this.shadowRoot.querySelector('#filter-panel').style.display='none'; p.style.display=open?'block':'none'; if(open){ this._calMonth=this._calMonth||new Date(this._winEnd*1000); this._renderCal(); } },
+_toggleCal() { const p=this.shadowRoot.querySelector('#cal-panel'); const open=p.style.display==='none'; this.shadowRoot.querySelector('#filter-panel').style.display='none'; p.style.display=open?'block':'none'; if(open){ this._syncCalendarButtonDate?.(); this._calMonth=this._calMonth||new Date(this._winEnd*1000); this._renderCal(); } },
 
 _calNav(d) { const m=this._calMonth||new Date(); m.setMonth(m.getMonth()+d); this._calMonth=new Date(m); this._renderCal(); },
+
+_syncCalendarButtonDate(ts=this._timelineFocusTs ?? this._winEnd) {
+    const btn=this.shadowRoot?.querySelector('#cal-btn'); if(!btn) return;
+    const seconds=Number(ts);
+    const selected=new Date((Number.isFinite(seconds)?seconds:Date.now()/1000)*1000);
+    const today=new Date();
+    const isToday=selected.getFullYear()===today.getFullYear() && selected.getMonth()===today.getMonth() && selected.getDate()===today.getDate();
+    let label=btn.querySelector('.cal-selected-date');
+    if(!label){
+      label=document.createElement('span');
+      label.className='cal-selected-date';
+      label.style.cssText='margin-left:6px;font-size:10px;font-weight:650;line-height:1;white-space:nowrap;font-variant-numeric:tabular-nums;';
+      btn.appendChild(label);
+    }
+    if(isToday){
+      label.textContent='';
+      label.hidden=true;
+      btn.title='Calendar';
+      btn.setAttribute('aria-label','Calendar');
+      return;
+    }
+    const sameYear=selected.getFullYear()===today.getFullYear();
+    const shortDate=selected.toLocaleDateString([],sameYear?{month:'short',day:'numeric'}:{month:'short',day:'numeric',year:'numeric'});
+    const spokenDate=selected.toLocaleDateString([],{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+    label.textContent=shortDate;
+    label.hidden=false;
+    btn.title=`Calendar · ${spokenDate}`;
+    btn.setAttribute('aria-label',`Calendar, selected ${spokenDate}`);
+  },
 
 _pickDay(ds) {
     const [y,mo,da]=String(ds||'').split('-').map(Number);
@@ -120,12 +149,21 @@ _pickDay(ds) {
     this._exhausted=false;
     this._timelineDataDirty=true;
 
+    const target=this._timelineFocusTs;
     const panel=this.shadowRoot.querySelector('#cal-panel');
     if(panel) panel.style.display='none';
+    this._syncCalendarButtonDate?.(target);
     this._renderTimeline(true);
     this._renderRange();
     this._renderTimelineZoomLabel();
     this._loadWindow(true);
+
+    // Selecting a calendar day is a committed timeline seek. Reuse the same
+    // recording-seek path as a normal tap/scrub so one click both moves the
+    // timeline and starts muted recording playback at the selected timestamp.
+    if(typeof this._seekTimelineTarget==='function') {
+      Promise.resolve(this._seekTimelineTarget(target)).catch(err=>console.warn('[Sightline] calendar seek failed',err));
+    }
   },
 
 _renderCal() {
