@@ -68,10 +68,6 @@ const timelineUxMethods={
       preview.style.setProperty('width',`min(${w}px, calc(100% - var(--tl-content) - 10px))`,'important');
       preview.style.setProperty('max-width',`${w}px`,'important');
       if(Number.isFinite(ts)){
-        // The detection row is anchored at yPct(ts). Center the preview on the
-        // exact same pixel, using the configured height as the authoritative
-        // geometry. This prevents the connector from drifting when the user
-        // changes timeline.thumbnail_size.
         const center=(yPct(ts)/100)*trackPx;
         preview.style.top=`${center-h/2}px`;
       }
@@ -109,8 +105,6 @@ const timelineUxMethods={
     const focus=Number.isFinite(Number(this._timelineFocusTs))
       ? Number(this._timelineFocusTs)
       : (Number(this._winStart)+Number(this._winEnd))/2;
-    // Exact inverse of timeline-render.js yPct():
-    // y = 50 + ((focus - ts) / span) * 100
     return focus+(0.5-ratio)*span;
   },
 
@@ -185,8 +179,6 @@ const timelineUxMethods={
     root.addEventListener('pointercancel',endPointer,{capture:true,passive:false});
     root.addEventListener('lostpointercapture',e=>{if(pointerId!=null&&e.pointerId===pointerId)finish();},{capture:true});
 
-    // WKWebView fallback. Some iOS versions expose PointerEvent but can still
-    // fail to deliver a complete pointer sequence through nested Shadow DOM.
     root.addEventListener('touchstart',e=>{
       if(pointerId!=null||kind||isActionTarget(e.target)||!e.changedTouches?.length)return;
       const touch=e.changedTouches[0];
@@ -214,7 +206,6 @@ const timelineUxMethods={
     root.addEventListener('touchend',endTouch,{capture:true,passive:false});
     root.addEventListener('touchcancel',endTouch,{capture:true,passive:false});
 
-    // Mouse fallback for browsers without Pointer Events.
     root.addEventListener('mousedown',e=>{
       if('PointerEvent' in window||e.button!==0||isActionTarget(e.target))return;
       if(!start(e.target,e.clientY))return;
@@ -237,4 +228,69 @@ const timelineUxMethods={
   }
 };
 
-export const multiRecordingMethods=Object.assign({},multiRecordingCoreMethods,multiRecordingPlayerMethods,multiRecordingControllerMethods,timelineUxMethods);
+const mediaBrowserFixMethods={
+  _mediaFilterValues() {
+    const values=browserMethods._mediaFilterValues.call(this);
+    if(this._eventsMode==='all'){
+      const cams=new Set(values.cams||[]);
+      for(const config of (this._config?.cameras||[])){
+        const cc=this._camCache?.[config.entity];
+        if(cc?.cam)cams.add(String(cc.cam));
+      }
+      values.cams=[...cams].sort((a,b)=>String(a).localeCompare(String(b)));
+    }
+    return values;
+  },
+
+  async _loadAllCamsBackground() {
+    const loadSeq=this._timelineLoadSeq;
+    const now=Math.floor(Date.now()/1000);
+    const isClipBrowser=this._eventsMode==='all'&&this._galleryMode==='clips';
+    const bounds=isClipBrowser ? this._mediaQueryBounds(now) : {start:this._winStart,end:this._winEnd};
+    const after=Math.max(0,Math.floor(Number(bounds?.start)||0));
+    const before=Math.max(after+1,Math.floor(Number(bounds?.end)||now));
+    const key=`${loadSeq}:${after}:${before}:${isClipBrowser?'clips':'timeline'}`;
+    if(this._allCamsBackgroundPromise&&this._allCamsBackgroundKey===key) return this._allCamsBackgroundPromise;
+
+    const task=(async()=>{
+      const others=(this._config?.cameras||[]).filter(c=>{
+        const cc=this._camCache?.[c.entity];
+        return c.entity!==this._activeCam?.entity&&cc?.discovered&&cc.clientId&&cc.cam;
+      });
+      await Promise.all(others.map(async c=>{
+        const cc=this._camCache[c.entity];
+        try{
+          const request={type:'frigate/events/get',instance_id:cc.clientId,cameras:[cc.cam],after,before,limit:isClipBrowser?500:200};
+          if(isClipBrowser)request.has_clip=true;
+          const ev=await this._ws(request);
+          cc.events=Array.isArray(ev)?ev:[];
+          this._mergeLoadedFilterMetadata(cc,cc.events,cc.reviews||[]);
+        }catch(_){}
+      }));
+      if(loadSeq!==this._timelineLoadSeq||this._eventsMode!=='all')return;
+      this._renderList();
+      if(isClipBrowser&&this._galleryMode==='clips')this._renderGallery();
+    })();
+
+    this._allCamsBackgroundKey=key;
+    this._allCamsBackgroundPromise=task;
+    try{return await task;}
+    finally{
+      if(this._allCamsBackgroundPromise===task){
+        this._allCamsBackgroundPromise=null;
+        this._allCamsBackgroundKey='';
+      }
+    }
+  },
+
+  async _setGalleryMode(tab) {
+    const result=await browserMethods._setGalleryMode.call(this,tab);
+    if(tab==='clips'&&this._galleryMode==='clips'&&this._eventsMode==='all'){
+      await this._loadAllCamsBackground();
+      if(this._galleryMode==='clips')this._renderGallery();
+    }
+    return result;
+  }
+};
+
+export const multiRecordingMethods=Object.assign({},multiRecordingCoreMethods,multiRecordingPlayerMethods,multiRecordingControllerMethods,timelineUxMethods,mediaBrowserFixMethods);
