@@ -62,7 +62,12 @@ export const responsiveUxMethods = {
     const engWrap=this.shadowRoot.querySelector('#eng-wrap');
     const grid=this.shadowRoot.querySelector('#cam-grid');
 
-    const showTimeline=timelineEnabled && (!galleryOpen || split);
+    // Full-card playback owns the workspace until media is dismissed. A resize
+    // or HA dashboard reconciliation must not resurrect the normal timeline or
+    // media panes while playback-layout.js still exposes only the feed grid
+    // area. Doing so creates an implicit CSS-grid row/column that appears as a
+    // large blank region beside/below the clip on wide dashboards.
+    const showTimeline=!playbackFull && timelineEnabled && (!galleryOpen || split);
     if(showTimeline){
       clearStyle(timelineWrap,'display');
       clearStyle(timeline,'display');
@@ -71,7 +76,13 @@ export const responsiveUxMethods = {
       setImportant(timeline,'display','none');
     }
 
-    if(galleryOpen){
+    if(playbackFull){
+      setImportant(feed,'display','block');
+      setImportant(media,'display','none');
+      media?.setAttribute?.('aria-hidden','true');
+      setImportant(engWrap,'display','block');
+      setImportant(grid,'display','none');
+    } else if(galleryOpen){
       setImportant(media,'display',workstation || (split&&!timelineEnabled) ? 'flex' : 'block');
       media?.setAttribute?.('aria-hidden','false');
     } else {
@@ -93,7 +104,9 @@ export const responsiveUxMethods = {
 
     // Derive the grid from panes that actually exist. Hiding a disabled
     // timeline without changing grid-template-areas leaves an empty column;
-    // these templates eliminate that dead track entirely.
+    // these templates eliminate that dead track entirely. playback-fullcard is
+    // intentionally excluded because its single-pane template is owned by the
+    // playback layout and must survive responsive reconciliation unchanged.
     if(layout && !playbackFull){
       if(workstation){
         if(timelineEnabled && galleryOpen){
@@ -133,8 +146,12 @@ export const responsiveUxMethods = {
   },
 
   _syncMediaGalleryScroll() {
-    if(!this._galleryMode) return;
     const card=this.shadowRoot?.querySelector?.('.card');
+    // Media is deliberately absent from the full-card playback workspace. Do
+    // not let a stale gallery state reapply workstation height/flex rules while
+    // a clip is occupying the single playback pane.
+    if(card?.classList?.contains?.('playback-fullcard')) return;
+    if(!this._galleryMode) return;
     const media=this.shadowRoot?.querySelector?.('.workspace-media');
     const gallery=this.shadowRoot?.querySelector?.('#media-gallery');
     const grid=this.shadowRoot?.querySelector?.('.media-gallery-grid');
@@ -190,6 +207,14 @@ export const responsiveUxMethods = {
 
   _syncColHeight() {
     if(!this.shadowRoot?.querySelector) return;
+    const card=this.shadowRoot.querySelector('.card');
+    if(card?.classList?.contains?.('playback-fullcard')){
+      // The remembered live/grid column height belongs to Multiview, not to
+      // full-card playback. Leaving it set allows wide-pane sizing rules to
+      // preserve empty vertical space even after those panes are hidden.
+      card.style?.removeProperty?.('--workspace-column-h');
+      return;
+    }
     layoutMethods._syncColHeight.call(this);
     requestAnimationFrame(()=>this._syncMediaGalleryScroll());
   },
