@@ -2,8 +2,9 @@ import { SightlineCard } from './SightlineCard.js';
 import { applyMethodGroups } from '../utils/apply-method-groups.js';
 import { multiRecordingMethods } from './multi-recording.js';
 import { responsiveUxMethods } from './responsive-ux.js';
+import { iosTimelineDateMethods } from './ios-timeline-date.js';
 
-applyMethodGroups(SightlineCard.prototype, multiRecordingMethods, responsiveUxMethods);
+applyMethodGroups(SightlineCard.prototype, multiRecordingMethods, responsiveUxMethods, iosTimelineDateMethods);
 
 // The v1.1.0 grid-playback wrapper used ordinary inline styles to collapse the
 // responsive desktop workspace. Workstation CSS intentionally uses !important,
@@ -12,6 +13,7 @@ applyMethodGroups(SightlineCard.prototype, multiRecordingMethods, responsiveUxMe
 // !important priority, then let the existing _showLive() restoration remove it.
 const enterPlayback=SightlineCard.prototype._enter;
 const showLive=SightlineCard.prototype._showLive;
+const renderTimeline=SightlineCard.prototype._renderTimeline;
 
 SightlineCard.prototype._enter=function(...args){
   const fromGrid=this._viewMode==='grid';
@@ -60,5 +62,13 @@ SightlineCard.prototype._showLive=function(...args){
   // Re-run the responsive visibility pass after the high-priority playback
   // overrides have been restored by the v1.1.0 wrapper.
   this._syncResponsiveWorkspace?.();
+  return result;
+};
+
+SightlineCard.prototype._renderTimeline=function(...args){
+  const result=renderTimeline.apply(this,args);
+  // Keep the calendar's visible date badge in lock-step with panning, scrubbing
+  // and recorded playback instead of updating it only when the picker closes.
+  this._updateTimelineDateLabel?.();
   return result;
 };
