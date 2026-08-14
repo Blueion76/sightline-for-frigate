@@ -97,6 +97,10 @@ function makeDateDom(){
     _updateTimelineDateLabel:iosTimelineDateMethods._updateTimelineDateLabel
   };
 
+  // Real card startup decorates the native input during responsive workspace
+  // setup before any picker interaction. Mirror that lifecycle here so the
+  // historical-date label exists when the selection is committed.
+  iosTimelineDateMethods._ensureTimelineNativeDateInput.call(ctx);
   await iosTimelineDateMethods._pickDay.call(ctx,'2026-08-09');
   const midnight=Math.floor(new Date(2026,7,9,0,0,0,0).getTime()/1000);
   assert.equal(ctx._winStart,midnight);
