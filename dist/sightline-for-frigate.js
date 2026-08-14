@@ -6243,11 +6243,12 @@ _click(e) {
     const gridFs = e.target.closest('[data-grid-fs]');
     if (gridFs) { e.stopPropagation(); this._fullscreen(this.shadowRoot.querySelector('#cam-grid')); return; }
     const card = e.target.closest('[data-ev]'); if (card) {
-      if (this._viewMode === 'grid') {
-        this._openInGridSlot(card.dataset.ev);
-      } else {
-        this._open(card.dataset.ev);
-      }
+      // Event media is a workspace-level playback action. In Multiview the
+      // grid is the return target, not a per-camera playback surface. Routing
+      // every browser event through `_open()` keeps Clips aligned with timeline
+      // and Review playback, and lets playback-layout.js temporarily replace
+      // the complete player until Back to Multiview is selected.
+      return this._open(card.dataset.ev);
     }
   },
 

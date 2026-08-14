@@ -16,6 +16,7 @@
 - Fixed recorded-playback synchronization on Windows/Chromium: the media decoder clock now translates the visible timeline window by the same fractional delta as playback, keeping the fixed playhead, `HH:MM:SS` pill, time scale, recording rail, detections, and thumbnails on the same wall-clock timestamp instead of allowing the label to advance independently.
 - Fixed desktop Multiview timeline mouse dragging after opening a clip and returning to Live. Timeline pointer/mouse/touch/wheel listeners now share one abortable lifecycle, and returning from full-card playback explicitly refreshes that binding set so the track cannot be left with a `mousedown` handler but no active `mousemove`/`mouseup` transport.
 - Fixed excess blank space when opening a clip from Multiview on wide/workstation dashboards. Full-card playback is now an explicit responsive visibility state: timeline/media/grid panes cannot be resurrected by a resize pass, the stale synchronized Multiview column height is removed while playback is active, and the compact one-pane layout is fully restored back to Multiview afterward.
+- Unified Multiview clip playback so clips selected from the Clips browser, Reviews, or the timeline temporarily replace the entire player workspace instead of opening inside only the camera tile that produced the event. Back to Multiview restores the original grid.
 
 ### Live audio and two-way audio
 
