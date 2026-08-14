@@ -2,7 +2,7 @@ import { actionMethods } from './actions.js';
 import { responsiveUxMethods } from './responsive-ux.js';
 import { timelineInteractionMethods } from './timeline-interaction.js';
 
-function parseDateValue(value) {
+function iosTimelineParseDateValue(value) {
   const m=String(value||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if(!m) return null;
   const y=Number(m[1]),mo=Number(m[2]),da=Number(m[3]);
@@ -12,7 +12,7 @@ function parseDateValue(value) {
   return {y,mo,da,date,value:`${String(y).padStart(4,'0')}-${String(mo).padStart(2,'0')}-${String(da).padStart(2,'0')}`};
 }
 
-function localDateValue(ts) {
+function iosTimelineLocalDateValue(ts) {
   const d=new Date(Number(ts||Date.now()/1000)*1000);
   const y=d.getFullYear();
   const m=String(d.getMonth()+1).padStart(2,'0');
@@ -20,8 +20,8 @@ function localDateValue(ts) {
   return `${y}-${m}-${day}`;
 }
 
-function displayDate(ds, includeYear=false) {
-  const parsed=parseDateValue(ds);
+function iosTimelineDisplayDate(ds, includeYear=false) {
+  const parsed=iosTimelineParseDateValue(ds);
   if(!parsed) return '';
   const options={month:'short',day:'numeric'};
   if(includeYear) options.year='numeric';
@@ -64,18 +64,18 @@ export const iosTimelineDateMethods = {
     if(!host||!input) return;
 
     let ds='';
-    if(typeof value==='string' && parseDateValue(value)) ds=parseDateValue(value).value;
-    else if(Number.isFinite(Number(value))) ds=localDateValue(Number(value));
-    else if(Number.isFinite(Number(this._timelineFocusTs))) ds=localDateValue(Number(this._timelineFocusTs));
-    else if(input.value && parseDateValue(input.value)) ds=parseDateValue(input.value).value;
-    else ds=localDateValue(Date.now()/1000);
+    if(typeof value==='string' && iosTimelineParseDateValue(value)) ds=iosTimelineParseDateValue(value).value;
+    else if(Number.isFinite(Number(value))) ds=iosTimelineLocalDateValue(Number(value));
+    else if(Number.isFinite(Number(this._timelineFocusTs))) ds=iosTimelineLocalDateValue(Number(this._timelineFocusTs));
+    else if(input.value && iosTimelineParseDateValue(input.value)) ds=iosTimelineParseDateValue(input.value).value;
+    else ds=iosTimelineLocalDateValue(Date.now()/1000);
 
-    const today=localDateValue(Date.now()/1000);
+    const today=iosTimelineLocalDateValue(Date.now()/1000);
     const isToday=ds===today;
-    const parsed=parseDateValue(ds);
+    const parsed=iosTimelineParseDateValue(ds);
     const currentYear=new Date().getFullYear();
-    const shortLabel=isToday ? '' : displayDate(ds,parsed?.y!==currentYear);
-    const fullLabel=isToday ? 'Today' : displayDate(ds,true);
+    const shortLabel=isToday ? '' : iosTimelineDisplayDate(ds,parsed?.y!==currentYear);
+    const fullLabel=isToday ? 'Today' : iosTimelineDisplayDate(ds,true);
     const label=host.querySelector?.('.timeline-date-label');
     if(label){
       label.textContent=shortLabel;
@@ -87,7 +87,7 @@ export const iosTimelineDateMethods = {
   },
 
   async _pickDay(ds) {
-    const parsed=parseDateValue(ds);
+    const parsed=iosTimelineParseDateValue(ds);
     if(!parsed) return actionMethods._pickDay.call(this,ds);
 
     // Keep the proven v1.1.2/v1.1.3 navigation behavior: preserve zoom, put
