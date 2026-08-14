@@ -86,6 +86,7 @@ export function initializeCardState(card) {
   card._timelineEventCache = new Map();
   card._timelineDataDirty = false;
   card._scrubAbort = null;
+  card._scrubTrack = null;
   card._scrollAbort = null;
 
   // Recorded/event playback lifecycle.

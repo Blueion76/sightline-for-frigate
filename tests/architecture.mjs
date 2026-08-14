@@ -54,4 +54,13 @@ assert.equal(new Set(BUNDLE_MODULES).size,BUNDLE_MODULES.length,'Build manifest 
   else globalThis.HTMLElement=oldHTMLElement;
 }
 
+
+// Returning from full-card media playback must restore the timeline gesture
+// lifecycle after the Multiview workspace has been put back in place.
+{
+  const source=read('src/card/ui/playback-layout.js');
+  assert.match(source,/returningFromPlayback/);
+  assert.ok(source.includes('this._refreshTimelineInteractionWiring?.(true);'));
+}
+
 console.log('Source architecture regression test passed.');

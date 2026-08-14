@@ -14,6 +14,7 @@
 - Preserved timeline legend filtering through the refactor so clicking a detection class filters the timeline and clicking the active class again returns to All.
 - Replaced factor-based +/- timeline zoom with discrete scales: `1m`, `5m`, `10m`, `30m`, `45m`, `1h`, `3h`, `6h`, `12h`, and `24h`.
 - Fixed recorded-playback synchronization on Windows/Chromium: the media decoder clock now translates the visible timeline window by the same fractional delta as playback, keeping the fixed playhead, `HH:MM:SS` pill, time scale, recording rail, detections, and thumbnails on the same wall-clock timestamp instead of allowing the label to advance independently.
+- Fixed desktop Multiview timeline mouse dragging after opening a clip and returning to Live. Timeline pointer/mouse/touch/wheel listeners now share one abortable lifecycle, and returning from full-card playback explicitly refreshes that binding set so the track cannot be left with a `mousedown` handler but no active `mousemove`/`mouseup` transport.
 
 ### Live audio and two-way audio
 

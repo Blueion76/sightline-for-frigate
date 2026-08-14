@@ -119,6 +119,9 @@ export const playbackLayoutMethods = {
 
   _showLive(...args) {
     const returnToGrid=this._playbackReturnViewMode==='grid';
+    const returningFromPlayback=Boolean(
+      this._playing || this._activePlaybackCleanup || this._playbackSession || this._playbackReturnViewMode
+    );
     const result=eventPlaybackMethods._showLive.apply(this,args);
     this._playbackReturnViewMode=null;
     const workspace=queryPlaybackWorkspace(this);
@@ -148,6 +151,10 @@ export const playbackLayoutMethods = {
       this._renderCamSwitcher();
     }
     this._syncResponsiveWorkspace?.();
+    // Full-card playback temporarily changes the Multiview workspace and can
+    // cross a card/layout lifecycle boundary in desktop Home Assistant. Refresh
+    // the complete scrub binding set only when actually returning from media.
+    if(returningFromPlayback) this._refreshTimelineInteractionWiring?.(true);
     return result;
   },
 };

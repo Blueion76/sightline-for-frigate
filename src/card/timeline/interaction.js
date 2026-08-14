@@ -47,6 +47,7 @@ _wireScrub() {
     if (this._scrubAbort) { try { this._scrubAbort.abort(); } catch(_) {} }
     const controller = new AbortController();
     this._scrubAbort = controller;
+    this._scrubTrack = track;
     const signal = controller.signal;
     let drag=false,sx=0,sy=0,sws=0,swe=0,lastScrubLabelAt=0;
     let scrubber=false,scrubberLastY=0,scrubberAutoRaf=0,scrubberAutoY=0;
@@ -333,7 +334,7 @@ _wireScrub() {
       if(e.target.closest('.tl-playhead i')){e.preventDefault();startScrubber(e.clientY);return;}
       if(e.target.closest('.t-ev,.t-preview,.tl-zoom-controls'))return;
       e.preventDefault();dn(e.clientX,e.clientY);
-    });
+    },{signal});
     window.addEventListener('mousemove',e=>{if(rangeDrag&&rangePointerId==null){e.preventDefault();moveRangeHandle(e.clientY);return;}if(scrubber){e.preventDefault();moveScrubber(e.clientY);return;}mv(e.clientX,e.clientY);},{signal});
     window.addEventListener('mouseup',()=>{if(rangeDrag&&rangePointerId==null){stopRangeHandle();return;}if(scrubber){stopScrubber();return;}up();},{signal});
     track.addEventListener('touchstart',e=>{
@@ -375,15 +376,15 @@ _wireScrub() {
       }
       if(e.target.closest('.t-ev,.t-preview,.tl-zoom-controls'))return;
       dn(e.touches[0].clientX,e.touches[0].clientY);
-    },{passive:false});
+    },{passive:false,signal});
     track.addEventListener('touchmove',e=>{
       if(rangeDrag&&rangePointerId==null){e.preventDefault();moveRangeHandle(e.touches[0].clientY);return;}
       if(scrubber){e.preventDefault();moveScrubber(e.touches[0].clientY);return;}
       if(pinch&&e.touches.length>=2){e.preventDefault();pinchMove(e.touches);return;}
       if(drag){e.preventDefault();mv(e.touches[0].clientX,e.touches[0].clientY);}
-    },{passive:false});
-    track.addEventListener('touchend',e=>{if(rangeDrag&&rangePointerId==null){e.preventDefault();stopRangeHandle();return;}if(scrubber){e.preventDefault();stopScrubber();return;}if(pinch){e.preventDefault();up();return;}up();},{passive:false});
-    track.addEventListener('touchcancel',()=>{if(rangeDrag&&rangePointerId==null){stopRangeHandle();return;}if(scrubber){stopScrubber();return;}pinch=false;drag=false;this._timelineInteracting=false;this._timelineWasLiveBeforeGesture=false;this._timelineLiveCrossed=false;track.classList.remove('grab');this._renderTimeline();});
+    },{passive:false,signal});
+    track.addEventListener('touchend',e=>{if(rangeDrag&&rangePointerId==null){e.preventDefault();stopRangeHandle();return;}if(scrubber){e.preventDefault();stopScrubber();return;}if(pinch){e.preventDefault();up();return;}up();},{passive:false,signal});
+    track.addEventListener('touchcancel',()=>{if(rangeDrag&&rangePointerId==null){stopRangeHandle();return;}if(scrubber){stopScrubber();return;}pinch=false;drag=false;this._timelineInteracting=false;this._timelineWasLiveBeforeGesture=false;this._timelineLiveCrossed=false;track.classList.remove('grab');this._renderTimeline();},{signal});
     track.addEventListener('wheel',e=>{
       e.preventDefault();
       if(this._downloadRange) return;
@@ -449,10 +450,28 @@ _wireScrub() {
       this._scheduleTimelineDynamicData('motion');
       clearTimeout(this._wt);this._wt=setTimeout(()=>{ this._timelineInteracting=false; this._renderTimeline(); const latest=this._scrubTarget ?? this._timelineFocusTs ?? this._winEnd; if(this._isAtLiveEdge(latest)){ this._refreshLiveFromTimeline(); return; } this._seekTimelineTarget(latest); },220);
       this._scheduleTimelineDataLoad();
-    },{passive:false});
+    },{passive:false,signal});
 
     this._wireDesktopEventTimelineDrag(track,signal);
     this._renderTimelineZoomLabel();
+  },
+
+  /**
+   * Ensure the visible timeline has one complete, current gesture binding set.
+   *
+   * Playback can temporarily hide the timeline while the dashboard layout is
+   * reconfigured. Rebinding at that lifecycle boundary is safe because every
+   * listener installed by `_wireScrub()` now belongs to the same AbortSignal.
+   * This prevents a half-wired state where `mousedown` survives but the global
+   * `mousemove`/`mouseup` listeners that actually carry the drag do not.
+   */
+  _refreshTimelineInteractionWiring(force=false) {
+    const track=this.shadowRoot?.querySelector?.('#tl-track');
+    if(!track) return false;
+    const signal=this._scrubAbort?.signal;
+    if(!force && this._scrubTrack===track && signal && !signal.aborted) return true;
+    this._wireScrub();
+    return this._scrubTrack===track && this._scrubAbort?.signal?.aborted===false;
   },
 
   /**

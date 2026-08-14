@@ -121,4 +121,53 @@ for(const [span,expected] of [[60,'1m'],[2700,'45m'],[21600,'6h'],[86400,'24h']]
   assert.ok(ctx._timelineSuppressClickUntil>performance.now());
 }
 
+
+// Scrub wiring must be all-or-nothing. Every track/window listener that carries
+// a drag belongs to the same AbortSignal so a lifecycle refresh cannot leave a
+// live mousedown handler paired with dead global mousemove/mouseup listeners.
+{
+  const oldWindow=globalThis.window;
+  const trackListeners=[];
+  const windowListeners=[];
+  const track={
+    addEventListener(name,handler,options){trackListeners.push({name,handler,options});},
+    classList:{add(){},remove(){},contains(){return true;}},
+  };
+  globalThis.window={
+    PointerEvent:function PointerEvent(){},
+    addEventListener(name,handler,options){windowListeners.push({name,handler,options});},
+  };
+  const ctx={
+    shadowRoot:{querySelector(selector){return selector==='#tl-track'?track:null;}},
+    _scrubAbort:null,
+    _scrubTrack:null,
+    _wireDesktopEventTimelineDrag(){},
+    _renderTimelineZoomLabel(){},
+  };
+  timelineGestureMethods._wireScrub.call(ctx);
+  const signal=ctx._scrubAbort.signal;
+  for(const name of ['mousedown','touchstart','touchmove','touchend','touchcancel','wheel']) {
+    assert.equal(trackListeners.find(item=>item.name===name)?.options?.signal,signal,`${name} must share scrub AbortSignal`);
+  }
+  for(const name of ['mousemove','mouseup']) {
+    assert.equal(windowListeners.find(item=>item.name===name)?.options?.signal,signal,`${name} must share scrub AbortSignal`);
+  }
+
+  let rewires=0;
+  const originalController=ctx._scrubAbort;
+  ctx._wireScrub=function(){
+    rewires++;
+    this._scrubAbort=new AbortController();
+    this._scrubTrack=track;
+  };
+  assert.equal(timelineGestureMethods._refreshTimelineInteractionWiring.call(ctx),true);
+  assert.equal(rewires,0,'healthy binding should not be duplicated');
+  originalController.abort();
+  assert.equal(timelineGestureMethods._refreshTimelineInteractionWiring.call(ctx),true);
+  assert.equal(rewires,1,'aborted binding must be restored');
+  assert.equal(timelineGestureMethods._refreshTimelineInteractionWiring.call(ctx,true),true);
+  assert.equal(rewires,2,'playback return may force one clean rebind');
+  globalThis.window=oldWindow;
+}
+
 console.log('v1.1.5 audio and timeline hardening regression tests passed.');
