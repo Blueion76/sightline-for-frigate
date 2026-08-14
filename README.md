@@ -1,5 +1,7 @@
 # Sightline for Frigate
 
+![Desktop Screenshot](docs/screenshot_1.png)
+
 A modern, responsive Frigate NVR card for Home Assistant.
 
 Sightline brings your Frigate cameras, live view, timeline, clips, recordings, reviews, downloads, filters, face recognition results, and two-way audio into one Lovelace card. It is designed to work equally well as a compact dashboard card or as a full-width camera workstation.
