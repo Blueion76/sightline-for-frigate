@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { actionMethods } from '../src/card/actions.js';
 import { timelineCalendarMethods } from '../src/card/timeline/calendar.js';
+import { localDateValue } from '../src/utils/date.js';
 
 class ClassListMock {
   constructor() { this.items=new Set(); }
@@ -18,6 +19,26 @@ function makeDateLabelDom() {
   };
   const root={querySelector(selector){return selector==='#cal-btn'?host:selector==='#timeline-native-date'?input:selector==='#cal-panel'?{style:{display:'block'}}:null;}};
   return {root,host,input,label};
+}
+
+// Cold-start placeholders (null focus and zero window bounds) are not Unix-epoch
+// timestamps. The native picker must initialize to Today before _start() seeds
+// the real timeline window, rather than showing Dec 31, 1969 in US time zones.
+{
+  const {root,host,input,label}=makeDateLabelDom();
+  const ctx={
+    shadowRoot:root,
+    _timelineFocusTs:null,
+    _winStart:0,
+    _winEnd:0,
+    _updateTimelineDateLabel(value){timelineCalendarMethods._updateTimelineDateLabel.call(this,value);},
+  };
+  timelineCalendarMethods._prepareTimelineNativeDateInput.call(ctx,input);
+  assert.equal(input.value,localDateValue());
+  assert.equal(input.max,localDateValue());
+  assert.equal(label.style.display,'none');
+  assert.match(host.title,/Today/);
+  assert.doesNotMatch(host.title,/1969|1970/);
 }
 
 // Historical navigation exposes the selected date beside the calendar icon and
