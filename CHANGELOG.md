@@ -3,10 +3,13 @@
 ## 1.1.5
 
 - Fixed the timeline date picker on iOS/Safari/WKWebView by making the user's tap land directly on a real `input[type="date"]` instead of forwarding the gesture to an offscreen input with `showPicker()`/`click()`.
-- The native date input now overlays the visible timeline calendar control while preserving the existing icon and styling.
+- The native date input now overlays the visible timeline calendar control while preserving the existing icon and styling, which also keeps desktop picker anchoring tied to the calendar button instead of an arbitrary offscreen point.
 - The input is refreshed with the timeline's current focused date on pointer/touch/focus before WebKit opens the system picker, so it remains accurate after scrubbing.
-- Date changes still use the existing timeline navigation path, preserving zoom, midnight date-only behavior, and the stale-playback/timer protections from v1.1.2/v1.1.3.
-- Added regression coverage for the direct-hit iOS picker path and ensured the normal interaction does not depend on programmatic picker activation.
+- Selecting a calendar date is now a complete navigation action: Sightline preserves the current timeline zoom, starts the visible range at local midnight, and immediately seeks/plays the continuous recording at the timeline's fixed playhead without requiring a second tap.
+- When the timeline is on a historical day, the calendar control displays the selected date beside the icon; on Today it returns to the compact icon-only state.
+- The selected-date label follows timeline scrubbing and recorded playback so it always reflects the date currently under the playhead.
+- Date changes still keep the stale-playback/timer protections from v1.1.2/v1.1.3 and synchronized Multiview playback continues to seek all configured cameras together.
+- Added regression coverage for the direct-hit iOS picker path, one-step calendar playback, selected-date labeling, and preservation of the existing timeline zoom/span.
 
 ## 1.1.4
 
