@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs",
-    "test": "node tests/smoke.mjs && node tests/multiview.mjs && node tests/timeline-ux.mjs && node tests/media-browser.mjs && node tests/date-time-filter.mjs && node tests/responsive-layout.mjs && node tests/ios-date-selection.mjs",
+    "test": "node tests/smoke.mjs && node tests/multiview.mjs && node tests/timeline-ux.mjs && node tests/media-browser.mjs && node tests/date-time-filter.mjs && node tests/responsive-layout.mjs && node tests/ios-date-selection.mjs && node tests/v115-hardening.mjs",
     "verify": "npm run build && npm run check && npm test"
   },
   "engines": {
