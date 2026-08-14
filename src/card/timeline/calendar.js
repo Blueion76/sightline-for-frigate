@@ -1,9 +1,9 @@
 /**
  * Native timeline date picker and selected-date presentation.
  *
- * iOS/Safari requires the user's gesture to land directly on a real date input.
- * The input therefore overlays the visible calendar control instead of relying
- * on a synthetic showPicker()/click() hand-off.
+ * iOS/Safari requires the user's gesture to land directly on a real date input,
+ * while Chromium is most reliable when showPicker() is called from the trusted
+ * desktop click. The same input supports both paths without synthetic hand-off.
  */
 import { formatLocalDateInput, localDateValue, parseLocalDateInput } from '../../utils/date.js';
 
@@ -13,6 +13,16 @@ function timelineDateFocus(card) {
     return (Number(card._winStart)+Number(card._winEnd))/2;
   }
   return Date.now()/1000;
+}
+
+function openNativeDatePicker(input) {
+  if(!input || typeof input.showPicker!=='function') return false;
+  try {
+    input.showPicker();
+    return true;
+  } catch(_) {
+    return false;
+  }
 }
 
 export const timelineCalendarMethods = {
@@ -55,11 +65,33 @@ export const timelineCalendarMethods = {
     input.setAttribute('aria-label','Timeline date');
     input.style.cssText='position:absolute;inset:0;width:100%;height:100%;min-width:100%;min-height:100%;opacity:0;pointer-events:auto;cursor:pointer;border:0;padding:0;margin:0;z-index:5;background:transparent;color:transparent;font-size:16px;';
 
+    let lastPointerType='';
     const prepare=()=>this._prepareTimelineNativeDateInput(input);
-    input.addEventListener('pointerdown',prepare,{capture:true,passive:true});
-    input.addEventListener('touchstart',prepare,{capture:true,passive:true});
+    input.addEventListener('pointerdown',(event)=>{
+      lastPointerType=String(event.pointerType||'');
+      prepare();
+    },{capture:true,passive:true});
+    input.addEventListener('touchstart',()=>{
+      // Preserve the iOS/WebKit direct-native activation path. Calling
+      // showPicker() is unnecessary there and can be less reliable than letting
+      // the trusted touch land on the input itself.
+      lastPointerType='touch';
+      prepare();
+    },{capture:true,passive:true});
     input.addEventListener('focus',prepare,{passive:true});
-    input.addEventListener('click',(event)=>event.stopPropagation());
+    input.addEventListener('click',(event)=>{
+      event.stopPropagation();
+      // Desktop Chromium focuses a date field when its transparent body is
+      // clicked but does not consistently open the calendar popup. Because
+      // this listener runs on the real trusted click, showPicker() satisfies
+      // Chromium's transient-user-activation requirement.
+      if(lastPointerType!=='touch') openNativeDatePicker(input);
+      lastPointerType='';
+    });
+    input.addEventListener('keydown',(event)=>{
+      if(event.key!=='Enter' && event.key!==' ') return;
+      if(openNativeDatePicker(input)) event.preventDefault();
+    });
     input.addEventListener('change',(event)=>{
       event.stopPropagation();
       if(input.value) this._pickDay(input.value);
@@ -108,13 +140,9 @@ export const timelineCalendarMethods = {
     if(!input) return;
     this._prepareTimelineNativeDateInput(input);
 
-    // Direct pointer/touch interaction normally opens the native picker. This
-    // path is retained for keyboard/desktop activation of the visible host.
-    try {
-      if(typeof input.showPicker==='function') input.showPicker();
-      else input.click();
-    } catch(_) {
-      try { input.click(); } catch(_) {}
-    }
+    // Keyboard/delegated activation reaches this path directly. Prefer
+    // showPicker() and retain click() only for engines that do not implement it.
+    if(openNativeDatePicker(input)) return;
+    try { input.click(); } catch(_) {}
   },
 };
