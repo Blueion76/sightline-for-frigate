@@ -9,7 +9,11 @@
 - When the timeline is on a historical day, the calendar control displays the selected date beside the icon; on Today it returns to the compact icon-only state.
 - The selected-date label follows timeline scrubbing and recorded playback so it always reflects the date currently under the playhead.
 - Date changes still keep the stale-playback/timer protections from v1.1.2/v1.1.3 and synchronized Multiview playback continues to seek all configured cameras together.
-- Added regression coverage for the direct-hit iOS picker path, one-step calendar playback, selected-date labeling, and preservation of the existing timeline zoom/span.
+- Fixed a two-way-audio compatibility case where privacy-restricted browsers can return an empty `enumerateDevices()` list before microphone permission is granted; Talk now remains eligible when `getUserMedia()` is supported and the real permission request decides whether a microphone is available.
+- Added an explicit live-audio speaker control for go2rtc WebRTC streams so inbound audio can be unmuted from a direct user gesture instead of depending on browser-native video controls.
+- Hardened desktop timeline dragging so a drag can begin directly on a detection thumbnail/event card after a small movement threshold while an ordinary stationary click still opens that event.
+- Changed timeline +/- zoom to discrete, human-readable scales: 1m, 5m, 10m, 30m, 45m, 1h, 3h, 6h, 12h, and 24h.
+- Added regression coverage for the direct-hit iOS picker path, one-step calendar playback, selected-date labeling, microphone pre-permission discovery, explicit live-audio unmute, desktop detection-card dragging, discrete timeline scales, and preservation of the existing timeline zoom/span.
 
 ## 1.1.4
 
@@ -43,17 +47,12 @@
 ## 1.1.0
 
 - Added configurable startup tab (`live`, `clips`, `recordings`, or `reviews`).
-- Added optional newest-clip autoplay when starting on Clips.
-- Grid/Multiview recorded clip playback now uses the full card and returns to Multiview afterward.
-- Added an explicit Back to Live / Back to Multiview playback control.
-- Added configurable timeline thumbnail sizing (`timeline.thumbnail_size`).
-- Added synchronized Multiview timeline playback: scrubbing the timeline seeks continuous recordings for every configured camera to the same wall-clock timestamp.
-- Cameras without retained footage at the selected Multiview timestamp show `No recording` without moving the other camera feeds out of sync.
+- Added per-camera filtering for Clips, Recordings, and Reviews when using Multiview.
+- Added a responsive desktop/workstation layout with persistent Live, Timeline, and Media panes.
+- Added Multiview synchronized continuous-recording playback and timeline seeking.
+- Added a configurable timeline thumbnail size and improved event thumbnail rendering.
+- Added an explicit Back to Live / Back to Multiview control while recorded media is playing.
 
 ## 1.0.0
 
-First public release as **Sightline for Frigate**.
-
-- New Lovelace custom element: `custom:sightline-card`.
-- New HACS bundle: `dist/sightline-for-frigate.js`.
-- Preserves the existing Frigate live view, timeline, media browser, downloads, filters, two-way audio, visual editor, and responsive wide-dashboard layout.
+- Initial Sightline for Frigate release.
