@@ -17,6 +17,7 @@
 - Fixed desktop Multiview timeline mouse dragging after opening a clip and returning to Live. Timeline pointer/mouse/touch/wheel listeners now share one abortable lifecycle, and returning from full-card playback explicitly refreshes that binding set so the track cannot be left with a `mousedown` handler but no active `mousemove`/`mouseup` transport.
 - Fixed excess blank space when opening a clip from Multiview on wide/workstation dashboards. Full-card playback is now an explicit responsive visibility state: timeline/media/grid panes cannot be resurrected by a resize pass, the stale synchronized Multiview column height is removed while playback is active, and the compact one-pane layout is fully restored back to Multiview afterward.
 - Unified Multiview clip playback so clips selected from the Clips browser, Reviews, or the timeline temporarily replace the entire player workspace instead of opening inside only the camera tile that produced the event. Back to Multiview restores the original grid.
+- Fixed the wide-workstation Clips side-panel edge case where a visibly mounted Multiview grid could briefly disagree with `_viewMode`. Full-player playback now recognizes the rendered grid as a fallback, so side-panel clip selection still replaces the entire Multiview player and returns to the grid afterward.
 
 ### Live audio and two-way audio
 

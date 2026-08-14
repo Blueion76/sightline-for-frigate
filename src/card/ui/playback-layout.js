@@ -82,12 +82,30 @@ function showPlaybackReturnButton(card,engine,returnToGrid) {
   }
 }
 
+/**
+ * Determine whether recorded media is replacing a visible Multiview player.
+ *
+ * `_viewMode` is the primary state, but Home Assistant can reconcile a wide
+ * dashboard while the Clips side pane is open and briefly leave that flag out
+ * of sync with the already-mounted grid. Playback should follow what the user
+ * is actually looking at, so the DOM presentation is an intentional fallback.
+ */
+export function isMultiviewPlaybackContext(card, workspace=queryPlaybackWorkspace(card)) {
+  if(card?._viewMode==='grid') return true;
+  if(workspace.card?.classList?.contains?.('grid-mode')) return true;
+
+  const grid=workspace.grid;
+  if(!grid || grid.style?.display==='none') return false;
+  const hasMountedSlot=Boolean(grid.children?.length || grid.querySelector?.('.grid-slot:not(.placeholder)'));
+  return hasMountedSlot;
+}
+
 export const playbackLayoutMethods = {
   _enter(...args) {
-    const returnToGrid=this._viewMode==='grid';
+    const workspace=queryPlaybackWorkspace(this);
+    const returnToGrid=isMultiviewPlaybackContext(this,workspace);
     if(returnToGrid&&!this._playbackReturnViewMode) this._playbackReturnViewMode='grid';
     const result=eventPlaybackMethods._enter.apply(this,args);
-    const workspace=queryPlaybackWorkspace(this);
 
     if(returnToGrid) {
       workspace.card?.classList.add('playback-fullcard');

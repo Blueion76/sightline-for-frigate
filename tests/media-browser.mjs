@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mediaNavigationMethods } from '../src/card/media/navigation.js';
+import { isMultiviewPlaybackContext } from '../src/card/ui/playback-layout.js';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const read=relative=>fs.readFileSync(path.join(root,relative),'utf8');
@@ -44,6 +45,19 @@ assert.match(layout,/min-height:30px/,'Playback return button should be reduced 
 }
 
 assert.match(controller,/if\(ev\.has_clip\) return this\._showClip\(ev\)/,'Timeline event clips must use the same full playback pipeline');
-assert.match(layout,/const returnToGrid=this\._viewMode==='grid'/,'Full playback must remember Multiview as the return target');
+// Wide workstation reconciliation can leave the state flag stale while the
+// Multiview grid is still visibly mounted beside the Clips browser. Playback
+// must follow the visible player, not only `_viewMode`.
+{
+  const grid={style:{display:''},children:[{}],querySelector:()=>({})};
+  const cardNode={classList:{contains:()=>false}};
+  const ctx={_viewMode:'single'};
+  assert.equal(isMultiviewPlaybackContext(ctx,{card:cardNode,grid}),true,'visible mounted Multiview must trigger full-player playback even with stale view state');
+
+  grid.style.display='none';
+  assert.equal(isMultiviewPlaybackContext(ctx,{card:cardNode,grid}),false,'a hidden stale grid must not force Multiview playback');
+}
+
+assert.match(layout,/isMultiviewPlaybackContext\(this,workspace\)/,'Full playback must derive its return target from the rendered Multiview context');
 
 console.log('Media browser and desktop playback regression test passed.');
