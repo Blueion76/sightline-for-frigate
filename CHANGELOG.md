@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1
+
+- Fixed Multiview Clips so every configured camera is queried over the same Clips browser time range instead of only the active camera receiving the full range.
+- Stabilized the Multiview camera filter so all configured cameras remain available even before each camera has returned a clip.
+- Fixed desktop clip playback opened from Multiview so workstation layout rules cannot squeeze the player beside the timeline or media browser.
+- Reduced the size of the Back to Live / Back to Multiview playback control.
+
 ## 1.1.0
 
 - Added configurable startup tab (`live`, `clips`, `recordings`, or `reviews`).

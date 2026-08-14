@@ -1,5 +1,5 @@
 // Shared constants and icon definitions.
-export const VERSION = '1.1.0';
+export const VERSION = '1.1.1';
 
 export const CARD_TAG = 'sightline-card';
 
