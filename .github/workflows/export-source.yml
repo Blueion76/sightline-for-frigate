@@ -20,3 +20,5 @@ jobs:
           name: sightline-source
           path: sightline-source.zip
           retention-days: 1
+
+# Temporary workflow used only for the PR7 refactor audit.
