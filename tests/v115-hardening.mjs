@@ -3,6 +3,7 @@ import { liveViewMethods } from '../src/card/live/view.js';
 import { multiviewTimelineMethods } from '../src/card/multiview/timeline-ui.js';
 import { microphoneMethods } from '../src/card/talk/microphone.js';
 import { timelineGestureMethods } from '../src/card/timeline/interaction.js';
+import { timelinePlaybackSyncMethods } from '../src/card/timeline/playback-sync.js';
 import { TIMELINE_SCALE_SECONDS, timelineScaleLabel, timelineScaleStep, timelineZoomMethods } from '../src/card/timeline/zoom.js';
 
 assert.deepEqual([...TIMELINE_SCALE_SECONDS],[60,300,600,1800,2700,3600,10800,21600,43200,86400]);
@@ -41,6 +42,40 @@ for(const [span,expected] of [[60,'1m'],[2700,'45m'],[21600,'6h'],[86400,'24h']]
   assert.equal(video.volume,1);
   assert.equal(played,1);
   assert.equal(rendered,1);
+}
+
+// Recorded playback uses a fixed visual playhead. Advancing the decoder clock
+// must translate the viewport by the exact same amount so the scale/events stay
+// in the same wall-clock coordinate system as the HH:MM:SS pill.
+{
+  let liveUpdates=0,reconciles=0,dynamicLoads=0;
+  const track={querySelector(){return null;}};
+  const ctx={
+    isConnected:true,
+    _timelineFollowingLive:false,
+    _timelineInteracting:false,
+    _timelineFocusTs:1_000_300,
+    _scrubTarget:1_000_300,
+    _winStart:1_000_000,
+    _winEnd:1_000_600,
+    _updateTimelineDateLabel(){},
+    _$(selector){return selector==='#tl-track'?track:null;},
+    _updateTimelineLive(){liveUpdates++;},
+    _reconcileTimelineDuringMove(){reconciles++;},
+    _scheduleTimelineDynamicData(mode){if(mode==='motion') dynamicLoads++;},
+    _timelineTime(value){return String(value);},
+    _timeMinute(value){return String(value);},
+    _renderTimeline(){throw new Error('ordinary playback progress should not require a full render');},
+  };
+  timelinePlaybackSyncMethods._updateTimelinePlaybackTime.call(ctx,1_000_301.25);
+  assert.equal(ctx._timelineFocusTs,1_000_301.25);
+  assert.equal(ctx._scrubTarget,1_000_301.25);
+  assert.equal(ctx._winStart,1_000_001.25);
+  assert.equal(ctx._winEnd,1_000_601.25);
+  assert.equal(ctx._winEnd-ctx._winStart,600);
+  assert.equal(liveUpdates,1);
+  assert.equal(reconciles,1);
+  assert.equal(dynamicLoads,1);
 }
 
 // Legend buttons continue to own filtering even after timeline drag hardening.
