@@ -40,17 +40,15 @@ export const responsiveUxMethods = {
     const oldButton=root.querySelector('#cal-btn');
     if(!oldButton?.parentNode) return null;
 
-    // iOS Safari/WKWebView often refuses showPicker()/click() when the date
-    // input is hidden/offscreen, even if that call originated from a visible
-    // button. Replace the visual button with an equivalent non-button host and
-    // put the REAL native date input directly over its full hit target. The
-    // user's finger therefore lands on <input type="date"> itself and WebKit
-    // owns the activation gesture from the beginning.
+    // iOS Safari/WKWebView does not reliably support programmatic showPicker()
+    // for date controls. Replace the visual button with an equivalent non-button
+    // host and put the REAL native date input directly over its full hit target.
+    // The user's finger therefore lands on <input type="date"> itself and
+    // WebKit owns the activation gesture from the beginning.
     const host=document.createElement('span');
     host.id='cal-btn';
     host.className=oldButton.className || 'tool';
     host.title=oldButton.title || 'Calendar';
-    host.setAttribute('aria-hidden','false');
     host.style.position='relative';
     host.innerHTML=oldButton.innerHTML;
 
@@ -58,7 +56,10 @@ export const responsiveUxMethods = {
     input.id='timeline-native-date';
     input.type='date';
     input.setAttribute('aria-label','Timeline date');
-    input.style.cssText='position:absolute;inset:0;width:100%;height:100%;min-width:100%;min-height:100%;opacity:0;pointer-events:auto;cursor:pointer;border:0;padding:0;margin:0;z-index:5;background:transparent;color:transparent;font-size:16px;-webkit-appearance:none;appearance:none;';
+    // Keep the native appearance semantics intact. The element is visually
+    // transparent, but it is real, sized, hit-testable, and receives the tap
+    // directly — exactly what iOS needs to present its system date wheel/sheet.
+    input.style.cssText='position:absolute;inset:0;width:100%;height:100%;min-width:100%;min-height:100%;opacity:0;pointer-events:auto;cursor:pointer;border:0;padding:0;margin:0;z-index:5;background:transparent;color:transparent;font-size:16px;';
 
     const prepare=()=>this._prepareTimelineNativeDateInput(input);
     // Prepare before WebKit performs the input's native default action. Do not
@@ -116,7 +117,7 @@ export const responsiveUxMethods = {
     // reconciliation, before the user can tap it. Creating it only from the
     // click handler is too late for iOS because the first gesture would still
     // belong to the synthetic/programmatic path.
-    if(this._config?.timeline?.show_calendar_button!==false) this._ensureTimelineNativeDateInput();
+    if(this._config?.timeline?.show_calendar_button!==false) this._ensureTimelineNativeDateInput?.();
 
     // Measure synchronously every time. The configured default gallery is
     // opened before ResizeObserver is installed during startup, so relying only
