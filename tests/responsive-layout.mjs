@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { responsiveUxMethods } from '../src/card/responsive-ux.js';
+import { timelineCalendarMethods } from '../src/card/timeline/calendar.js';
 
 class StyleMock {
   constructor(){ this.values=new Map(); this.priority=new Map(); }
@@ -158,10 +159,11 @@ for(const mode of ['clips','recordings','reviews']){
   const focus=Math.floor(new Date(2026,7,12,15,30,0,0).getTime()/1000);
   const ctx={
     shadowRoot:root,_timelineFocusTs:focus,_winStart:focus-300,_winEnd:focus+300,
-    _prepareTimelineNativeDateInput:responsiveUxMethods._prepareTimelineNativeDateInput,
+    _prepareTimelineNativeDateInput:timelineCalendarMethods._prepareTimelineNativeDateInput,
+    _updateTimelineDateLabel:timelineCalendarMethods._updateTimelineDateLabel,
     _pickDay:value=>{picked=value;}
   };
-  const native=responsiveUxMethods._ensureTimelineNativeDateInput.call(ctx);
+  const native=timelineCalendarMethods._ensureTimelineNativeDateInput.call(ctx);
   assert.equal(native,input);
   assert.equal(replacement.tagName,'SPAN');
   assert.equal(replacement.id,'cal-btn');

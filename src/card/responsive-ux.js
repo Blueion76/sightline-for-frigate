@@ -1,14 +1,9 @@
+/**
+ * Responsive workspace policy and native timeline date-control integration.
+ */
 import { coreMethods } from './core.js';
 import { layoutMethods } from './layout.js';
 import { browserMethods } from './browser.js';
-
-function localDateValue(ts) {
-  const d=new Date(Number(ts||Date.now()/1000)*1000);
-  const y=d.getFullYear();
-  const m=String(d.getMonth()+1).padStart(2,'0');
-  const day=String(d.getDate()).padStart(2,'0');
-  return `${y}-${m}-${day}`;
-}
 
 function clearStyle(el, prop) {
   try { el?.style?.removeProperty?.(prop); } catch(_) {}
@@ -19,88 +14,6 @@ function setImportant(el, prop, value) {
 }
 
 export const responsiveUxMethods = {
-  _prepareTimelineNativeDateInput(input) {
-    if(!input) return null;
-    const focus=Number.isFinite(Number(this._timelineFocusTs))
-      ? Number(this._timelineFocusTs)
-      : (Number.isFinite(Number(this._winStart))&&Number.isFinite(Number(this._winEnd))
-        ? (Number(this._winStart)+Number(this._winEnd))/2
-        : Date.now()/1000);
-    input.value=localDateValue(focus);
-    input.max=localDateValue(Date.now()/1000);
-    return input;
-  },
-
-  _ensureTimelineNativeDateInput() {
-    const root=this.shadowRoot;
-    if(!root?.querySelector) return null;
-    let input=root.querySelector('#timeline-native-date');
-    if(input) return input;
-
-    const oldButton=root.querySelector('#cal-btn');
-    if(!oldButton?.parentNode) return null;
-
-    // iOS Safari/WKWebView does not reliably support programmatic showPicker()
-    // for date controls. Replace the visual button with an equivalent non-button
-    // host and put the REAL native date input directly over its full hit target.
-    // The user's finger therefore lands on <input type="date"> itself and
-    // WebKit owns the activation gesture from the beginning.
-    const host=document.createElement('span');
-    host.id='cal-btn';
-    host.className=oldButton.className || 'tool';
-    host.title=oldButton.title || 'Calendar';
-    host.style.position='relative';
-    host.innerHTML=oldButton.innerHTML;
-
-    input=document.createElement('input');
-    input.id='timeline-native-date';
-    input.type='date';
-    input.setAttribute('aria-label','Timeline date');
-    // Keep the native appearance semantics intact. The element is visually
-    // transparent, but it is real, sized, hit-testable, and receives the tap
-    // directly — exactly what iOS needs to present its system date wheel/sheet.
-    input.style.cssText='position:absolute;inset:0;width:100%;height:100%;min-width:100%;min-height:100%;opacity:0;pointer-events:auto;cursor:pointer;border:0;padding:0;margin:0;z-index:5;background:transparent;color:transparent;font-size:16px;';
-
-    const prepare=()=>this._prepareTimelineNativeDateInput(input);
-    // Prepare before WebKit performs the input's native default action. Do not
-    // preventDefault: doing so would suppress the iOS system date picker.
-    input.addEventListener('pointerdown',prepare,{capture:true,passive:true});
-    input.addEventListener('touchstart',prepare,{capture:true,passive:true});
-    input.addEventListener('focus',prepare,{passive:true});
-    // The card has delegated click/change handlers for other controls. Keep the
-    // native input's events from bubbling into #cal-btn and triggering the old
-    // programmatic picker path after iOS has already accepted the direct tap.
-    input.addEventListener('click',e=>e.stopPropagation());
-    input.addEventListener('change',e=>{
-      e.stopPropagation();
-      const value=input.value;
-      if(value) this._pickDay(value);
-      try { input.blur(); } catch(_) {}
-    });
-
-    host.appendChild(input);
-    oldButton.parentNode.replaceChild(host,oldButton);
-    this._prepareTimelineNativeDateInput(input);
-    return input;
-  },
-
-  _toggleCal() {
-    // Normal interaction is direct through the overlaid native input. Keep this
-    // path only as a desktop/keyboard fallback if a synthetic click reaches the
-    // visual host instead of the input itself.
-    const oldPanel=this.shadowRoot?.querySelector?.('#cal-panel');
-    if(oldPanel) oldPanel.style.display='none';
-    const input=this._ensureTimelineNativeDateInput();
-    if(!input) return;
-    this._prepareTimelineNativeDateInput(input);
-    try {
-      if(typeof input.showPicker==='function') input.showPicker();
-      else input.click();
-    } catch(_) {
-      try { input.click(); } catch(_) {}
-    }
-  },
-
   _measureResponsiveCardWidth() {
     const rect=Number(this.getBoundingClientRect?.().width||0);
     const client=Number(this.clientWidth||0);

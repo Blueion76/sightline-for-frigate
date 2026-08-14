@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const read=relative=>fs.readFileSync(path.join(root,relative),'utf8');
-const controller=read('src/card/multi-recording-controller.js');
-const core=read('src/card/multi-recording-core.js');
-const ux=read('src/card/multi-recording.js');
+const controller=read('src/card/multiview/controller.js');
+const core=read('src/card/multiview/core.js');
+const ux=read('src/card/multiview/timeline-ui.js');
 
 assert.match(controller,/_showMultiRecording\(/,'Multiview recording playback method must exist');
 assert.match(controller,/_viewMode==='grid'/,'Grid timeline seeks must use Multiview playback');

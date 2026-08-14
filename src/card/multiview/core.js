@@ -1,4 +1,7 @@
-export const multiRecordingCoreMethods = {
+/**
+ * Shared Multiview recording calculations and per-camera synchronization helpers.
+ */
+export const multiviewCoreMethods = {
   _multiRecordingBucket(target) {
     const bucket=15*60;
     const t=Math.max(0,Math.floor(Number(target)||0));

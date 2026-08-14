@@ -1,3 +1,4 @@
+/** Register Sightline's card/editor custom elements with Home Assistant. */
 import { VERSION, CARD_TAG } from './constants.js';
 import { SightlineCard } from './card/SightlineCard.js';
 import { SightlineCardEditor } from './editor/SightlineCardEditor.js';

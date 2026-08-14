@@ -1,3 +1,6 @@
+/**
+ * Card geometry, responsive sizing, stream resize behavior and layout synchronization.
+ */
 import { VERSION, CARD_TAG, DAY, DEFAULT_ROTATE_S, ICONS, LABEL_COLORS, PALETTE, TIMELINE_GLYPHS, CAM_COLORS } from '../constants.js';
 import { cap, parseWs, labelColor, timelineGlyph, mkCamState, camDisplayName } from '../helpers.js';
 import { STYLES } from '../styles.js';
@@ -59,7 +62,7 @@ _watchAutoAspectMedia(media) {
 _applyCardStyle() {
     const card = this.shadowRoot.querySelector('.card'); if (!card) return;
 
-    // v2.0.45 player geometry authority. Home Assistant mounts the live card
+    // Player geometry authority. Home Assistant mounts the live card
     // before hui-card-preview has necessarily finished joining the composed DOM.
     // A later ResizeObserver pass can therefore add editor-preview after the first
     // paint. Geometry must be recalculated at that transition instead of allowing

@@ -1,3 +1,4 @@
+/** Shared stateless helpers used by card, timeline and camera modules. */
 import { LABEL_COLORS, PALETTE, TIMELINE_GLYPHS } from './constants.js';
 
 // Shared stateless helpers used across card modules.

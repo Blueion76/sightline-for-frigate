@@ -2,41 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-
+import { BUNDLE_MODULES } from './build-manifest.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, 'dist', 'sightline-for-frigate.js');
 
-const modules = [
-  'src/constants.js',
-  'src/helpers.js',
-  'src/styles.js',
-  'src/utils/apply-method-groups.js',
-  'src/card/core.js',
-  'src/card/live.js',
-  'src/card/talk.js',
-  'src/card/data.js',
-  'src/card/render-shell.js',
-  'src/card/layout.js',
-  'src/card/browser.js',
-  'src/card/event-playback.js',
-  'src/card/recording-playback.js',
-  'src/card/actions.js',
-  'src/card/timeline-interaction.js',
-  'src/card/timeline-render.js',
-  'src/card/lists.js',
-  'src/card/download.js',
-  'src/card/multi-recording-core.js',
-  'src/card/multi-recording-player.js',
-  'src/card/multi-recording-controller.js',
-  'src/card/multi-recording.js',
-  'src/card/responsive-ux.js',
-  'src/card/v115.js',
-  'src/card/SightlineCard.js',
-  'src/card/multi-recording-init.js',
-  'src/editor/methods.js',
-  'src/editor/SightlineCardEditor.js',
-  'src/index.js'
-];
 
 function flattenModule(code, filename) {
   const strippedImports = code.replace(/^import\s+[^\n]+;\s*\n/gm, '');
@@ -52,7 +21,7 @@ if (!versionMatch || versionMatch[1] !== pkg.version) throw new Error(`package.j
 
 const banner = `// Sightline for Frigate v${pkg.version}\n// Generated from src/ by scripts/build.mjs. Do not edit dist directly.\n`;
 let bundle = banner;
-for (const relative of modules) {
+for (const relative of BUNDLE_MODULES) {
   const full = path.join(root, relative);
   if (!fs.existsSync(full)) throw new Error(`Missing source module: ${relative}`);
   bundle += flattenModule(fs.readFileSync(full, 'utf8'), relative);
