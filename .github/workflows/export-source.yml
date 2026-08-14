@@ -1,0 +1,22 @@
+name: Export source snapshot
+
+on:
+  push:
+    branches:
+      - fix/ios-native-timeline-picker-v1.1.5
+
+jobs:
+  export:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/ios-native-timeline-picker-v1.1.5
+      - name: Archive source and project metadata
+        run: zip -qr sightline-source.zip src tests scripts package.json package-lock.json CHANGELOG.md README.md hacs.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sightline-source
+          path: sightline-source.zip
+          retention-days: 1
