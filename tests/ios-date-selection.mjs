@@ -125,6 +125,7 @@ function makeDateLabelDom() {
     shadowRoot:root,
     _timelineFocusTs:+new Date(2026,7,14,15,30)/1000,
     _pickDay(){},
+    _prepareTimelineNativeDateInput(input){return timelineCalendarMethods._prepareTimelineNativeDateInput.call(this,input);},
     _updateTimelineDateLabel(value){timelineCalendarMethods._updateTimelineDateLabel.call(this,value);},
   };
 
