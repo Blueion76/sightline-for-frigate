@@ -8276,9 +8276,9 @@ _renderFilter() {
 /**
  * Native timeline date picker and selected-date presentation.
  *
- * iOS/Safari requires the user's gesture to land directly on a real date input.
- * The input therefore overlays the visible calendar control instead of relying
- * on a synthetic showPicker()/click() hand-off.
+ * iOS/Safari requires the user's gesture to land directly on a real date input,
+ * while Chromium is most reliable when showPicker() is called from the trusted
+ * desktop click. The same input supports both paths without synthetic hand-off.
  */
 function timelineDateFocus(card) {
   if(Number.isFinite(Number(card._timelineFocusTs))) return Number(card._timelineFocusTs);
@@ -8286,6 +8286,16 @@ function timelineDateFocus(card) {
     return (Number(card._winStart)+Number(card._winEnd))/2;
   }
   return Date.now()/1000;
+}
+
+function openNativeDatePicker(input) {
+  if(!input || typeof input.showPicker!=='function') return false;
+  try {
+    input.showPicker();
+    return true;
+  } catch(_) {
+    return false;
+  }
 }
 
 const timelineCalendarMethods = {
@@ -8328,11 +8338,33 @@ const timelineCalendarMethods = {
     input.setAttribute('aria-label','Timeline date');
     input.style.cssText='position:absolute;inset:0;width:100%;height:100%;min-width:100%;min-height:100%;opacity:0;pointer-events:auto;cursor:pointer;border:0;padding:0;margin:0;z-index:5;background:transparent;color:transparent;font-size:16px;';
 
+    let lastPointerType='';
     const prepare=()=>this._prepareTimelineNativeDateInput(input);
-    input.addEventListener('pointerdown',prepare,{capture:true,passive:true});
-    input.addEventListener('touchstart',prepare,{capture:true,passive:true});
+    input.addEventListener('pointerdown',(event)=>{
+      lastPointerType=String(event.pointerType||'');
+      prepare();
+    },{capture:true,passive:true});
+    input.addEventListener('touchstart',()=>{
+      // Preserve the iOS/WebKit direct-native activation path. Calling
+      // showPicker() is unnecessary there and can be less reliable than letting
+      // the trusted touch land on the input itself.
+      lastPointerType='touch';
+      prepare();
+    },{capture:true,passive:true});
     input.addEventListener('focus',prepare,{passive:true});
-    input.addEventListener('click',(event)=>event.stopPropagation());
+    input.addEventListener('click',(event)=>{
+      event.stopPropagation();
+      // Desktop Chromium focuses a date field when its transparent body is
+      // clicked but does not consistently open the calendar popup. Because
+      // this listener runs on the real trusted click, showPicker() satisfies
+      // Chromium's transient-user-activation requirement.
+      if(lastPointerType!=='touch') openNativeDatePicker(input);
+      lastPointerType='';
+    });
+    input.addEventListener('keydown',(event)=>{
+      if(event.key!=='Enter' && event.key!==' ') return;
+      if(openNativeDatePicker(input)) event.preventDefault();
+    });
     input.addEventListener('change',(event)=>{
       event.stopPropagation();
       if(input.value) this._pickDay(input.value);
@@ -8381,14 +8413,10 @@ const timelineCalendarMethods = {
     if(!input) return;
     this._prepareTimelineNativeDateInput(input);
 
-    // Direct pointer/touch interaction normally opens the native picker. This
-    // path is retained for keyboard/desktop activation of the visible host.
-    try {
-      if(typeof input.showPicker==='function') input.showPicker();
-      else input.click();
-    } catch(_) {
-      try { input.click(); } catch(_) {}
-    }
+    // Keyboard/delegated activation reaches this path directly. Prefer
+    // showPicker() and retain click() only for engines that do not implement it.
+    if(openNativeDatePicker(input)) return;
+    try { input.click(); } catch(_) {}
   },
 };
 
@@ -9278,51 +9306,85 @@ const timelineZoomMethods = {
  * stable so existing card behavior and tests remain unchanged.
  */
 const timelinePlaybackSyncMethods = {
-_updateTimelineScrubLabel(target) {
+  _updateTimelineScrubLabel(target) {
     const t=Math.max(0,Math.floor(Number(target)||0));
     if(!Number.isFinite(t)) return;
     const range=this._$('#tl-range');
     if(range) range.textContent=`${new Date(t*1000).toLocaleDateString([],{month:'short',day:'2-digit'}).toUpperCase()} · ${this._timeMinute(t)}`;
   },
 
-_updateTimelinePlaybackTime(ts) {
-    // Keep fractional media time internally so the scrubber is driven by the
-    // actual decoder clock rather than a once-per-second rounded value. The
-    // UI label is rounded only for display. This removes the occasional 1s
-    // (and, with HLS, sometimes 2s) apparent drift between the video and the
-    // timeline.
+  _updateTimelinePlaybackTime(ts) {
+    // Keep fractional media time internally so the timeline follows the actual
+    // decoder clock instead of a once-per-second rounded value. The label is
+    // rounded only for display.
     const t=Number(ts);
     if(!Number.isFinite(t) || t<0 || !this.isConnected) return;
+
+    const previousFocus=Number.isFinite(Number(this._timelineFocusTs))
+      ? Number(this._timelineFocusTs)
+      : t;
+    let start=Number(this._winStart);
+    let end=Number(this._winEnd);
+    const span=Math.max(1,end-start);
+
+    // The playhead is intentionally fixed at the visual center of the track.
+    // Therefore playback progress must translate the viewport by the same
+    // amount as the decoder clock. Previously only _timelineFocusTs changed,
+    // which let Chromium advance the HH:MM:SS pill while the scale, recording
+    // rail and detections remained at their old wall-clock positions until a
+    // later render happened.
+    if(!this._timelineFollowingLive && !this._timelineInteracting && Number.isFinite(start) && Number.isFinite(end)) {
+      const delta=t-previousFocus;
+      if(Math.abs(delta)>0.0001) {
+        start+=delta;
+        end+=delta;
+        if(start<0) {
+          end-=start;
+          start=0;
+        }
+        this._winStart=start;
+        this._winEnd=end;
+      }
+    }
+
     this._timelineFocusTs=t;
     this._scrubTarget=t;
     this._updateTimelineDateLabel?.(t);
+
     const track=this._$('#tl-track');
     if(!track) return;
-    const s=Number(this._winStart), e=Number(this._winEnd);
-    const span=Math.max(1,e-s);
-    const pct=Math.max(0,Math.min(100,50+((t-s)/span-0.5)*100));
+
+    const s=Number(this._winStart);
+    const e=Number(this._winEnd);
     const ph=track.querySelector('.tl-playhead');
     if(ph) {
-      // The playhead itself is fixed at 50% visually; its label is the current
-      // playback time. Keep the label updated even when video playback pauses.
       const label=ph.querySelector('span');
       if(label) label.textContent=this._timelineTime(Math.round(t));
     }
     const range=track.querySelector('#tl-range');
     if(range) range.textContent=`${new Date(t*1000).toLocaleDateString([],{month:'short',day:'2-digit'}).toUpperCase()} · ${this._timeMinute(Math.round(t))}`;
-    // If the media clock has moved outside the currently visible window,
-    // re-anchor the window around it without changing its zoom span. This is
-    // especially important when a player resumes after a long stall/rebuffer.
+
+    if(!this._timelineFollowingLive && !this._timelineInteracting) {
+      // Reposition existing timeline nodes immediately from the same media-clock
+      // sample. Reconciliation is throttled separately, so new/expired event
+      // nodes appear without rebuilding the whole timeline on every timeupdate.
+      this._updateTimelineLive?.();
+      this._reconcileTimelineDuringMove?.();
+      this._scheduleTimelineDynamicData?.('motion');
+    }
+
+    // Defensive recovery for discontinuities where the source jumps beyond the
+    // translated viewport (for example an HLS discontinuity or restored seek).
     if(t<s || t>e) {
       const half=span/2;
-      this._winStart=Math.max(0,Math.floor(t-half));
-      this._winEnd=Math.floor(t+half);
-      this._renderRange();
+      this._winStart=Math.max(0,t-half);
+      this._winEnd=this._winStart+span;
+      this._updateTimelineLive?.();
       this._renderTimeline(false);
     }
   },
 
-_wireTimelineMediaClock(video, originTs, token) {
+  _wireTimelineMediaClock(video, originTs, token) {
     if(!video || video.dataset.frigateTimelineClock==='1') return;
     video.dataset.frigateTimelineClock='1';
     // This clock is attached only to event clips. A clip has its own media-time
@@ -9344,7 +9406,7 @@ _wireTimelineMediaClock(video, originTs, token) {
     sync();
   },
 
-_attachTimelineMediaClock(player, originTs, token) {
+  _attachTimelineMediaClock(player, originTs, token) {
     let tries=0;
     const attach=()=>{
       if(token!=null && this._playSeq!==token) return;
@@ -9355,7 +9417,7 @@ _attachTimelineMediaClock(player, originTs, token) {
     attach();
   },
 
-async _seekTimelineTarget(target) {
+  async _seekTimelineTarget(target) {
     const t=Math.max(0,Math.floor(Number(target)));
     if(!Number.isFinite(t)) return;
     const seq=++this._timelineSeekSeq;
