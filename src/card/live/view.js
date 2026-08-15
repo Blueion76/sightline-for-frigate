@@ -7,6 +7,13 @@
 import { DEFAULT_ROTATE_S, ICONS } from '../../constants.js';
 import { cap, mkCamState, camDisplayName } from '../../helpers.js';
 
+/** Return whether Sightline should render its own fullscreen control. */
+export function shouldShowFullscreenButton({isLive=false,inGrid=false,isIOS=false}={}) {
+  // Recorded single-camera video already exposes native player fullscreen.
+  // Sightline's control is needed for the live WebRTC wrapper and Multiview.
+  return !isIOS && (isLive || inGrid);
+}
+
 export const liveViewMethods = {
 async _mountGrid() {
     const grid = this.shadowRoot.querySelector('#cam-grid'); if (!grid) return;
@@ -177,11 +184,15 @@ _renderStreamCtrl() {
            <span class="talk-mic-glyph" aria-hidden="true">${ICONS.mic}</span>
          </button>`
       : '';
-    // Do not render any dedicated fullscreen control on iOS. Native WebKit
-    // fullscreen can destabilize MediaStream-backed live video, and the custom
-    // pseudo-fullscreen button was redundant with the platform's own viewing
-    // affordances. Desktop keeps the whole-grid control where it is useful.
-    const fsBtn = (inGrid && !this._isIOSRecordingPlatform())
+    // Keep Sightline's fullscreen affordance on desktop Live as well as
+    // Multiview. Single-camera recorded playback already has native video
+    // controls, while iOS intentionally keeps custom fullscreen disabled for
+    // MediaStream stability.
+    const fsBtn = shouldShowFullscreenButton({
+      isLive,
+      inGrid,
+      isIOS:this._isIOSRecordingPlatform(),
+    })
       ? `<button class="scb-btn" id="sc-fs" title="Fullscreen" aria-label="Fullscreen">${ICONS.expand}</button>`
       : '';
     // Live is represented internally by an empty gallery mode because the
