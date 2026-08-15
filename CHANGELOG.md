@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Restored the dedicated fullscreen button on desktop single-camera Live. It fullscreens the existing `#eng-wrap` WebRTC wrapper without replacing the stream, remains available in Multiview, stays hidden for iOS live MediaStreams, and avoids duplicating the native fullscreen control on single-camera recorded playback.
+
 ## 1.1.5
 
 ### Timeline and calendar reliability
@@ -21,7 +25,6 @@
 
 ### Live audio and two-way audio
 
-- Restored the dedicated fullscreen button on desktop single-camera Live. It fullscreens the existing `#eng-wrap` WebRTC wrapper without replacing the stream, remains available in Multiview, stays hidden for iOS live MediaStreams, and avoids duplicating the native fullscreen control on single-camera recorded playback.
 - Fixed microphone discovery for privacy-restricted browsers that return an empty `enumerateDevices()` list before permission is granted. Talk remains eligible when `getUserMedia()` is supported, and the real permission request remains authoritative.
 - Added an explicit live-audio speaker control for go2rtc WebRTC streams so inbound camera audio can be unmuted from a direct user gesture instead of depending on browser-native video controls.
 - Preserved Sightline's existing Home Assistant Frigate integration same-origin go2rtc WebSocket proxy, two-way-audio session lifecycle, disconnect timeout, and camera-bound talk behavior.
