@@ -1,0 +1,36 @@
+name: Default Multiview v1.1.6 verify
+
+on:
+  push:
+    branches:
+      - fix/live-fullscreen-button-v1.1.5
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/live-fullscreen-button-v1.1.5
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply default Multiview option
+        run: python scripts/tmp-default-multiview-v116.py
+      - run: npm ci
+      - run: npm run verify
+      - name: Commit verified source and dist
+        run: |
+          rm scripts/tmp-default-multiview-v116.py
+          rm .github/workflows/default-multiview-v116-verify.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/card/core.js src/editor/config.js src/editor/render.js README.md CHANGELOG.md tests/responsive-layout.mjs dist/sightline-for-frigate.js scripts/tmp-default-multiview-v116.py .github/workflows/default-multiview-v116-verify.yml
+          git commit -m "Add default Multiview option for v1.1.6"
+          git push
