@@ -3,6 +3,7 @@
 ## 1.1.6
 
 - Restored the dedicated fullscreen button on desktop single-camera Live. It fullscreens the existing `#eng-wrap` WebRTC wrapper without replacing the stream, remains available in Multiview, stays hidden for iOS live MediaStreams, and avoids duplicating the native fullscreen control on single-camera recorded playback.
+- Added `default_view: multiview` as the public startup option for multi-camera cards and exposed it as **Multiview (all cameras)** in the visual editor. Existing `default_view: grid` configurations remain supported as a backward-compatible alias.
 
 ## 1.1.5
 

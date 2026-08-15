@@ -3666,6 +3666,13 @@ function initializeCardState(card) {
 /**
  * Home Assistant lifecycle, normalized configuration and shared card-level utilities.
  */
+function normalizeDefaultView(value, cameraCount) {
+  const requested=String(value||'').trim().toLowerCase();
+  return Number(cameraCount)>1 && (requested==='multiview' || requested==='grid')
+    ? 'multiview'
+    : 'single';
+}
+
 const coreMethods = {
 setConfig(config) {
     config = (config && typeof config === 'object') ? config : {};
@@ -3724,7 +3731,7 @@ setConfig(config) {
       refresh_seconds: Math.max(15,Math.min(3600,Number(config.refresh_seconds)||45)),
       rotate_seconds: num(config.rotate_seconds,0,0,3600),
       rotate_on_load: config.rotate_on_load === true && cameras.length > 1,
-      default_view: (config.default_view === 'grid' && cameras.length > 1) ? 'grid' : 'single',
+      default_view: normalizeDefaultView(config.default_view, cameras.length),
       hidden_tabs: hiddenTabs,
       default_tab: defaultTab,
       autoplay_latest_clip: config.autoplay_latest_clip === true,
@@ -3831,7 +3838,7 @@ async _start() {
     const initialTimelineSpan=this._timelineDefaultSpanSeconds();
     this._winStart = now - initialTimelineSpan/2; this._winEnd = now + initialTimelineSpan/2; this._timelineZoom = 3600/initialTimelineSpan;
     this._timelineFollowingLive = true; this._timelineWasLiveBeforeGesture = false; this._timelineLiveCrossed = false;
-    if (this._config.default_view === 'grid' && this._config.cameras.length > 1) this._setViewMode('grid');
+    if (this._config.default_view === 'multiview' && this._config.cameras.length > 1) this._setViewMode('grid');
     await this._mountEngine();
     await this._loadWindow(true, true);
     await this._applyInitialMediaState();
@@ -11838,7 +11845,7 @@ _render() {
       <input type="checkbox" name="hide-${id}" data-hide-tab="${id}" ${hiddenTabs.has(id)?'checked':''}> ${label}
     </label>`;
 
-    const defaultView = this._config?.default_view || 'single';
+    const defaultView = ['multiview','grid'].includes(this._config?.default_view) ? 'multiview' : 'single';
     const rotateOnLoad = this._config?.rotate_on_load === true;
     const tl=this._config?.timeline||{};
     const dl=this._config?.download||{};
@@ -11941,9 +11948,9 @@ _render() {
         <span class="field-label">View</span>
         <div class="radio-row">
           <label class="radio-lbl"><input type="radio" name="default_view" value="single" ${defaultView==='single'?'checked':''}> Single camera</label>
-          <label class="radio-lbl"><input type="radio" name="default_view" value="grid" ${defaultView==='grid'?'checked':''} ${usableCamCount<2?'disabled':''}> Grid (all cams)</label>
+          <label class="radio-lbl"><input type="radio" name="default_view" value="multiview" ${defaultView==='multiview'?'checked':''} ${usableCamCount<2?'disabled':''}> Multiview (all cameras)</label>
         </div>
-        ${usableCamCount<2?'<small class="mini-help">Grid view becomes available when at least two camera entities are configured.</small>':''}
+        ${usableCamCount<2?'<small class="mini-help">Multiview becomes available when at least two camera entities are configured.</small>':''}
         <div style="margin-top:8px">
           <label class="chk-lbl"><input type="checkbox" name="rotate_on_load" id="rotate_on_load" ${rotateOnLoad?'checked':''} ${usableCamCount<2?'disabled':''}> Auto-rotate on load</label>
         </div>
@@ -12170,7 +12177,7 @@ _u() {
     c.theme = this.querySelector('input[name="theme"]:checked')?.value || 'dark';
     // default view
     const dv = this.querySelector('input[name="default_view"]:checked')?.value || 'single';
-    c.default_view = (dv==='grid' && cams.length>1) ? 'grid' : 'single';
+    c.default_view = (dv==='multiview' && cams.length>1) ? 'multiview' : 'single';
     // rotate on load only has meaning with multiple configured cameras
     c.rotate_on_load = cams.length>1 && this.querySelector('#rotate_on_load')?.checked === true;
     // hidden tabs
