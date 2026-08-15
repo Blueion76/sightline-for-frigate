@@ -4640,7 +4640,8 @@ _renderStreamCtrl() {
     if (this._talkSpeaking && this._talkMic) this._startTalkWaveform();
   },
 
-_setViewMode(mode) {
+_setViewMode(mode, options={}) {
+    const mountEngine = options?.mountEngine !== false;
     if (mode === 'grid') this._stopTalk(); // no talk button/target in grid view
     this._viewMode = mode;
     const card = this.shadowRoot.querySelector('.card');
@@ -4663,7 +4664,7 @@ _setViewMode(mode) {
       // A camera selector is meaningless in single-camera browsing. Clear any
       // selection carried over from Multiview before rendering the gallery.
       if(this._mediaFilter) this._mediaFilter.camera='all';
-      this._mountEngine();
+      if (mountEngine) this._mountEngine();
       this._renderAll();
     }
     this._renderCamSwitcher();
@@ -4676,8 +4677,10 @@ async _switchCamera(idx) {
     if (idx === this._activeCamIdx && this._viewMode === 'single') return;
     this._downloadRange=null;
     this._stopTalk(); // talk session is bound to the previous camera's go2rtc stream
-    // Clicking a cam tab while in grid mode switches to single view of that camera
-    if (this._viewMode === 'grid') this._setViewMode('single');
+    // Capture the Multiview exit before changing camera state. We defer the
+    // presentation change until the selected camera is active so entering
+    // single view cannot start a stale mount for the previously active camera.
+    const leavingGrid = this._viewMode === 'grid';
     const prevEnt = this._activeCam?.entity;
     if (prevEnt && this._camCache[prevEnt]) {
       this._camCache[prevEnt].events = this._events;
@@ -4696,6 +4699,9 @@ async _switchCamera(idx) {
     const cached = this._camCache[newEnt];
     this._events = cached.events||[]; this._recordings = cached.recordings||[]; this._recordingsLoaded = cached.recordingsLoaded===true; this._recordingsRangeStart = Number.isFinite(Number(cached.recordingsRangeStart)) ? Number(cached.recordingsRangeStart) : null; this._recordingsRangeEnd = Number.isFinite(Number(cached.recordingsRangeEnd)) ? Number(cached.recordingsRangeEnd) : null; this._recordingsLoadedAt = Number(cached.recordingsLoadedAt)||0;
     this._reviews = cached.reviews||[]; this._kept = cached.kept||[];
+    // _switchCamera owns this remount. Suppress _setViewMode's normal implicit
+    // mount so there is exactly one WebRTC/HA engine handoff for the new camera.
+    if (leavingGrid) this._setViewMode('single', { mountEngine:false });
     this._renderCamSwitcher(); this._syncStatus();
     await this._mountEngine();
     this._renderAll();
@@ -10871,9 +10877,9 @@ const multiviewControllerMethods = {
     return timelineInteractionMethods._seekTimelineTarget.call(this,target);
   },
 
-  _setViewMode(mode) {
+  _setViewMode(mode, options={}) {
     if(mode!=='grid'&&this._multiPlaybackSession)this._cancelMultiRecordingPlayback();
-    return liveMethods._setViewMode.call(this,mode);
+    return liveMethods._setViewMode.call(this,mode,options);
   }
 };
 
