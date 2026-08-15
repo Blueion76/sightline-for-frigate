@@ -38,7 +38,7 @@ _u() {
     c.theme = this.querySelector('input[name="theme"]:checked')?.value || 'dark';
     // default view
     const dv = this.querySelector('input[name="default_view"]:checked')?.value || 'single';
-    c.default_view = (dv==='grid' && cams.length>1) ? 'grid' : 'single';
+    c.default_view = (dv==='multiview' && cams.length>1) ? 'multiview' : 'single';
     // rotate on load only has meaning with multiple configured cameras
     c.rotate_on_load = cams.length>1 && this.querySelector('#rotate_on_load')?.checked === true;
     // hidden tabs

@@ -1,9 +1,9 @@
-// Sightline for Frigate v1.1.5
+// Sightline for Frigate v1.1.6
 // Generated from src/ by scripts/build.mjs. Do not edit dist directly.
 
 // ── src/constants.js ──
 // Shared constants and icon definitions.
-const VERSION = '1.1.5';
+const VERSION = '1.1.6';
 
 const CARD_TAG = 'sightline-card';
 
@@ -3666,6 +3666,13 @@ function initializeCardState(card) {
 /**
  * Home Assistant lifecycle, normalized configuration and shared card-level utilities.
  */
+function normalizeDefaultView(value, cameraCount) {
+  const requested=String(value||'').trim().toLowerCase();
+  return Number(cameraCount)>1 && (requested==='multiview' || requested==='grid')
+    ? 'multiview'
+    : 'single';
+}
+
 const coreMethods = {
 setConfig(config) {
     config = (config && typeof config === 'object') ? config : {};
@@ -3724,7 +3731,7 @@ setConfig(config) {
       refresh_seconds: Math.max(15,Math.min(3600,Number(config.refresh_seconds)||45)),
       rotate_seconds: num(config.rotate_seconds,0,0,3600),
       rotate_on_load: config.rotate_on_load === true && cameras.length > 1,
-      default_view: (config.default_view === 'grid' && cameras.length > 1) ? 'grid' : 'single',
+      default_view: normalizeDefaultView(config.default_view, cameras.length),
       hidden_tabs: hiddenTabs,
       default_tab: defaultTab,
       autoplay_latest_clip: config.autoplay_latest_clip === true,
@@ -3831,7 +3838,7 @@ async _start() {
     const initialTimelineSpan=this._timelineDefaultSpanSeconds();
     this._winStart = now - initialTimelineSpan/2; this._winEnd = now + initialTimelineSpan/2; this._timelineZoom = 3600/initialTimelineSpan;
     this._timelineFollowingLive = true; this._timelineWasLiveBeforeGesture = false; this._timelineLiveCrossed = false;
-    if (this._config.default_view === 'grid' && this._config.cameras.length > 1) this._setViewMode('grid');
+    if (this._config.default_view === 'multiview' && this._config.cameras.length > 1) this._setViewMode('grid');
     await this._mountEngine();
     await this._loadWindow(true, true);
     await this._applyInitialMediaState();
@@ -4421,6 +4428,13 @@ _addLiveFsExit(wrap){
  * Methods are composed onto SightlineCard.prototype; method names are kept
  * stable so existing card behavior and tests remain unchanged.
  */
+/** Return whether Sightline should render its own fullscreen control. */
+function shouldShowFullscreenButton({isLive=false,inGrid=false,isIOS=false}={}) {
+  // Recorded single-camera video already exposes native player fullscreen.
+  // Sightline's control is needed for the live WebRTC wrapper and Multiview.
+  return !isIOS && (isLive || inGrid);
+}
+
 const liveViewMethods = {
 async _mountGrid() {
     const grid = this.shadowRoot.querySelector('#cam-grid'); if (!grid) return;
@@ -4591,11 +4605,15 @@ _renderStreamCtrl() {
            <span class="talk-mic-glyph" aria-hidden="true">${ICONS.mic}</span>
          </button>`
       : '';
-    // Do not render any dedicated fullscreen control on iOS. Native WebKit
-    // fullscreen can destabilize MediaStream-backed live video, and the custom
-    // pseudo-fullscreen button was redundant with the platform's own viewing
-    // affordances. Desktop keeps the whole-grid control where it is useful.
-    const fsBtn = (inGrid && !this._isIOSRecordingPlatform())
+    // Keep Sightline's fullscreen affordance on desktop Live as well as
+    // Multiview. Single-camera recorded playback already has native video
+    // controls, while iOS intentionally keeps custom fullscreen disabled for
+    // MediaStream stability.
+    const fsBtn = shouldShowFullscreenButton({
+      isLive,
+      inGrid,
+      isIOS:this._isIOSRecordingPlatform(),
+    })
       ? `<button class="scb-btn" id="sc-fs" title="Fullscreen" aria-label="Fullscreen">${ICONS.expand}</button>`
       : '';
     // Live is represented internally by an empty gallery mode because the
@@ -4622,7 +4640,8 @@ _renderStreamCtrl() {
     if (this._talkSpeaking && this._talkMic) this._startTalkWaveform();
   },
 
-_setViewMode(mode) {
+_setViewMode(mode, options={}) {
+    const mountEngine = options?.mountEngine !== false;
     if (mode === 'grid') this._stopTalk(); // no talk button/target in grid view
     this._viewMode = mode;
     const card = this.shadowRoot.querySelector('.card');
@@ -4645,7 +4664,7 @@ _setViewMode(mode) {
       // A camera selector is meaningless in single-camera browsing. Clear any
       // selection carried over from Multiview before rendering the gallery.
       if(this._mediaFilter) this._mediaFilter.camera='all';
-      this._mountEngine();
+      if (mountEngine) this._mountEngine();
       this._renderAll();
     }
     this._renderCamSwitcher();
@@ -4658,8 +4677,10 @@ async _switchCamera(idx) {
     if (idx === this._activeCamIdx && this._viewMode === 'single') return;
     this._downloadRange=null;
     this._stopTalk(); // talk session is bound to the previous camera's go2rtc stream
-    // Clicking a cam tab while in grid mode switches to single view of that camera
-    if (this._viewMode === 'grid') this._setViewMode('single');
+    // Capture the Multiview exit before changing camera state. We defer the
+    // presentation change until the selected camera is active so entering
+    // single view cannot start a stale mount for the previously active camera.
+    const leavingGrid = this._viewMode === 'grid';
     const prevEnt = this._activeCam?.entity;
     if (prevEnt && this._camCache[prevEnt]) {
       this._camCache[prevEnt].events = this._events;
@@ -4678,6 +4699,9 @@ async _switchCamera(idx) {
     const cached = this._camCache[newEnt];
     this._events = cached.events||[]; this._recordings = cached.recordings||[]; this._recordingsLoaded = cached.recordingsLoaded===true; this._recordingsRangeStart = Number.isFinite(Number(cached.recordingsRangeStart)) ? Number(cached.recordingsRangeStart) : null; this._recordingsRangeEnd = Number.isFinite(Number(cached.recordingsRangeEnd)) ? Number(cached.recordingsRangeEnd) : null; this._recordingsLoadedAt = Number(cached.recordingsLoadedAt)||0;
     this._reviews = cached.reviews||[]; this._kept = cached.kept||[];
+    // _switchCamera owns this remount. Suppress _setViewMode's normal implicit
+    // mount so there is exactly one WebRTC/HA engine handoff for the new camera.
+    if (leavingGrid) this._setViewMode('single', { mountEngine:false });
     this._renderCamSwitcher(); this._syncStatus();
     await this._mountEngine();
     this._renderAll();
@@ -10853,9 +10877,9 @@ const multiviewControllerMethods = {
     return timelineInteractionMethods._seekTimelineTarget.call(this,target);
   },
 
-  _setViewMode(mode) {
+  _setViewMode(mode, options={}) {
     if(mode!=='grid'&&this._multiPlaybackSession)this._cancelMultiRecordingPlayback();
-    return liveMethods._setViewMode.call(this,mode);
+    return liveMethods._setViewMode.call(this,mode,options);
   }
 };
 
@@ -11827,7 +11851,7 @@ _render() {
       <input type="checkbox" name="hide-${id}" data-hide-tab="${id}" ${hiddenTabs.has(id)?'checked':''}> ${label}
     </label>`;
 
-    const defaultView = this._config?.default_view || 'single';
+    const defaultView = ['multiview','grid'].includes(this._config?.default_view) ? 'multiview' : 'single';
     const rotateOnLoad = this._config?.rotate_on_load === true;
     const tl=this._config?.timeline||{};
     const dl=this._config?.download||{};
@@ -11930,9 +11954,9 @@ _render() {
         <span class="field-label">View</span>
         <div class="radio-row">
           <label class="radio-lbl"><input type="radio" name="default_view" value="single" ${defaultView==='single'?'checked':''}> Single camera</label>
-          <label class="radio-lbl"><input type="radio" name="default_view" value="grid" ${defaultView==='grid'?'checked':''} ${usableCamCount<2?'disabled':''}> Grid (all cams)</label>
+          <label class="radio-lbl"><input type="radio" name="default_view" value="multiview" ${defaultView==='multiview'?'checked':''} ${usableCamCount<2?'disabled':''}> Multiview (all cameras)</label>
         </div>
-        ${usableCamCount<2?'<small class="mini-help">Grid view becomes available when at least two camera entities are configured.</small>':''}
+        ${usableCamCount<2?'<small class="mini-help">Multiview becomes available when at least two camera entities are configured.</small>':''}
         <div style="margin-top:8px">
           <label class="chk-lbl"><input type="checkbox" name="rotate_on_load" id="rotate_on_load" ${rotateOnLoad?'checked':''} ${usableCamCount<2?'disabled':''}> Auto-rotate on load</label>
         </div>
@@ -12159,7 +12183,7 @@ _u() {
     c.theme = this.querySelector('input[name="theme"]:checked')?.value || 'dark';
     // default view
     const dv = this.querySelector('input[name="default_view"]:checked')?.value || 'single';
-    c.default_view = (dv==='grid' && cams.length>1) ? 'grid' : 'single';
+    c.default_view = (dv==='multiview' && cams.length>1) ? 'multiview' : 'single';
     // rotate on load only has meaning with multiple configured cameras
     c.rotate_on_load = cams.length>1 && this.querySelector('#rotate_on_load')?.checked === true;
     // hidden tabs

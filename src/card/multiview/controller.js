@@ -119,8 +119,8 @@ export const multiviewControllerMethods = {
     return timelineInteractionMethods._seekTimelineTarget.call(this,target);
   },
 
-  _setViewMode(mode) {
+  _setViewMode(mode, options={}) {
     if(mode!=='grid'&&this._multiPlaybackSession)this._cancelMultiRecordingPlayback();
-    return liveMethods._setViewMode.call(this,mode);
+    return liveMethods._setViewMode.call(this,mode,options);
   }
 };

@@ -5,6 +5,13 @@ import { VERSION, CARD_TAG, DAY, DEFAULT_ROTATE_S, ICONS, LABEL_COLORS, PALETTE,
 import { cap, parseWs, labelColor, timelineGlyph, mkCamState, camDisplayName } from '../helpers.js';
 import { STYLES } from '../styles.js';
 
+export function normalizeDefaultView(value, cameraCount) {
+  const requested=String(value||'').trim().toLowerCase();
+  return Number(cameraCount)>1 && (requested==='multiview' || requested==='grid')
+    ? 'multiview'
+    : 'single';
+}
+
 export const coreMethods = {
 setConfig(config) {
     config = (config && typeof config === 'object') ? config : {};
@@ -63,7 +70,7 @@ setConfig(config) {
       refresh_seconds: Math.max(15,Math.min(3600,Number(config.refresh_seconds)||45)),
       rotate_seconds: num(config.rotate_seconds,0,0,3600),
       rotate_on_load: config.rotate_on_load === true && cameras.length > 1,
-      default_view: (config.default_view === 'grid' && cameras.length > 1) ? 'grid' : 'single',
+      default_view: normalizeDefaultView(config.default_view, cameras.length),
       hidden_tabs: hiddenTabs,
       default_tab: defaultTab,
       autoplay_latest_clip: config.autoplay_latest_clip === true,
@@ -170,7 +177,7 @@ async _start() {
     const initialTimelineSpan=this._timelineDefaultSpanSeconds();
     this._winStart = now - initialTimelineSpan/2; this._winEnd = now + initialTimelineSpan/2; this._timelineZoom = 3600/initialTimelineSpan;
     this._timelineFollowingLive = true; this._timelineWasLiveBeforeGesture = false; this._timelineLiveCrossed = false;
-    if (this._config.default_view === 'grid' && this._config.cameras.length > 1) this._setViewMode('grid');
+    if (this._config.default_view === 'multiview' && this._config.cameras.length > 1) this._setViewMode('grid');
     await this._mountEngine();
     await this._loadWindow(true, true);
     await this._applyInitialMediaState();

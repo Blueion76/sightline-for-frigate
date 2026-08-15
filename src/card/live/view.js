@@ -7,6 +7,13 @@
 import { DEFAULT_ROTATE_S, ICONS } from '../../constants.js';
 import { cap, mkCamState, camDisplayName } from '../../helpers.js';
 
+/** Return whether Sightline should render its own fullscreen control. */
+export function shouldShowFullscreenButton({isLive=false,inGrid=false,isIOS=false}={}) {
+  // Recorded single-camera video already exposes native player fullscreen.
+  // Sightline's control is needed for the live WebRTC wrapper and Multiview.
+  return !isIOS && (isLive || inGrid);
+}
+
 export const liveViewMethods = {
 async _mountGrid() {
     const grid = this.shadowRoot.querySelector('#cam-grid'); if (!grid) return;
@@ -177,11 +184,15 @@ _renderStreamCtrl() {
            <span class="talk-mic-glyph" aria-hidden="true">${ICONS.mic}</span>
          </button>`
       : '';
-    // Do not render any dedicated fullscreen control on iOS. Native WebKit
-    // fullscreen can destabilize MediaStream-backed live video, and the custom
-    // pseudo-fullscreen button was redundant with the platform's own viewing
-    // affordances. Desktop keeps the whole-grid control where it is useful.
-    const fsBtn = (inGrid && !this._isIOSRecordingPlatform())
+    // Keep Sightline's fullscreen affordance on desktop Live as well as
+    // Multiview. Single-camera recorded playback already has native video
+    // controls, while iOS intentionally keeps custom fullscreen disabled for
+    // MediaStream stability.
+    const fsBtn = shouldShowFullscreenButton({
+      isLive,
+      inGrid,
+      isIOS:this._isIOSRecordingPlatform(),
+    })
       ? `<button class="scb-btn" id="sc-fs" title="Fullscreen" aria-label="Fullscreen">${ICONS.expand}</button>`
       : '';
     // Live is represented internally by an empty gallery mode because the
@@ -208,7 +219,8 @@ _renderStreamCtrl() {
     if (this._talkSpeaking && this._talkMic) this._startTalkWaveform();
   },
 
-_setViewMode(mode) {
+_setViewMode(mode, options={}) {
+    const mountEngine = options?.mountEngine !== false;
     if (mode === 'grid') this._stopTalk(); // no talk button/target in grid view
     this._viewMode = mode;
     const card = this.shadowRoot.querySelector('.card');
@@ -231,7 +243,7 @@ _setViewMode(mode) {
       // A camera selector is meaningless in single-camera browsing. Clear any
       // selection carried over from Multiview before rendering the gallery.
       if(this._mediaFilter) this._mediaFilter.camera='all';
-      this._mountEngine();
+      if (mountEngine) this._mountEngine();
       this._renderAll();
     }
     this._renderCamSwitcher();
@@ -244,8 +256,10 @@ async _switchCamera(idx) {
     if (idx === this._activeCamIdx && this._viewMode === 'single') return;
     this._downloadRange=null;
     this._stopTalk(); // talk session is bound to the previous camera's go2rtc stream
-    // Clicking a cam tab while in grid mode switches to single view of that camera
-    if (this._viewMode === 'grid') this._setViewMode('single');
+    // Capture the Multiview exit before changing camera state. We defer the
+    // presentation change until the selected camera is active so entering
+    // single view cannot start a stale mount for the previously active camera.
+    const leavingGrid = this._viewMode === 'grid';
     const prevEnt = this._activeCam?.entity;
     if (prevEnt && this._camCache[prevEnt]) {
       this._camCache[prevEnt].events = this._events;
@@ -264,6 +278,9 @@ async _switchCamera(idx) {
     const cached = this._camCache[newEnt];
     this._events = cached.events||[]; this._recordings = cached.recordings||[]; this._recordingsLoaded = cached.recordingsLoaded===true; this._recordingsRangeStart = Number.isFinite(Number(cached.recordingsRangeStart)) ? Number(cached.recordingsRangeStart) : null; this._recordingsRangeEnd = Number.isFinite(Number(cached.recordingsRangeEnd)) ? Number(cached.recordingsRangeEnd) : null; this._recordingsLoadedAt = Number(cached.recordingsLoadedAt)||0;
     this._reviews = cached.reviews||[]; this._kept = cached.kept||[];
+    // _switchCamera owns this remount. Suppress _setViewMode's normal implicit
+    // mount so there is exactly one WebRTC/HA engine handoff for the new camera.
+    if (leavingGrid) this._setViewMode('single', { mountEngine:false });
     this._renderCamSwitcher(); this._syncStatus();
     await this._mountEngine();
     this._renderAll();
