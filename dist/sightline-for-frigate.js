@@ -1,9 +1,9 @@
-// Sightline for Frigate v1.1.5
+// Sightline for Frigate v1.1.6
 // Generated from src/ by scripts/build.mjs. Do not edit dist directly.
 
 // ── src/constants.js ──
 // Shared constants and icon definitions.
-const VERSION = '1.1.5';
+const VERSION = '1.1.6';
 
 const CARD_TAG = 'sightline-card';
 
