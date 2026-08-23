@@ -63,4 +63,35 @@ assert.equal(new Set(BUNDLE_MODULES).size,BUNDLE_MODULES.length,'Build manifest 
   assert.ok(source.includes('this._refreshTimelineInteractionWiring?.(true);'));
 }
 
+// Method-group barrels must preserve accessors. `Object.assign` copies accessor
+// properties *by value*, so a group declaring `set hass(h)` with no getter
+// collapses to a dead `hass: undefined` data property. That silently broke the
+// visual editor: Home Assistant's `editor.hass = hass` never ran the setter, so
+// `_frigateEntities()` fell back to the configured entity list and the camera
+// picker only ever offered the `getStubConfig()` placeholder.
+for(const relative of runtimeFiles) {
+  const source=read(relative);
+  assert.equal(
+    /Methods\s*=\s*Object\.assign\(/.test(source),
+    false,
+    `${relative} must compose method groups with mergeMethodGroups(), not Object.assign (accessors are lost)`,
+  );
+}
+
+{
+  const oldHTMLElement=globalThis.HTMLElement;
+  if(oldHTMLElement===undefined) globalThis.HTMLElement=class {};
+  const [{ SightlineCardEditor },{ SightlineCard }]=await Promise.all([
+    import('../src/editor/SightlineCardEditor.js'),
+    import('../src/card/SightlineCard.js'),
+  ]);
+  for(const [ctor,label] of [[SightlineCardEditor,'SightlineCardEditor'],[SightlineCard,'SightlineCard']]) {
+    const descriptor=Object.getOwnPropertyDescriptor(ctor.prototype,'hass');
+    assert.ok(descriptor,`${label}.prototype must define a hass property`);
+    assert.equal(typeof descriptor.set,'function',`${label}.prototype.hass must remain a setter, not a data property`);
+  }
+  if(oldHTMLElement===undefined) delete globalThis.HTMLElement;
+  else globalThis.HTMLElement=oldHTMLElement;
+}
+
 console.log('Source architecture regression test passed.');

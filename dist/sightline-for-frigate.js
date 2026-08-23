@@ -3476,6 +3476,19 @@ function applyMethodGroups(target, ...groups) {
   }
 }
 
+/**
+ * Merge method groups into a new plain object, preserving accessors.
+ *
+ * Barrels must not use `Object.assign` for this: it copies accessor properties
+ * *by value*, so a group declaring `set hass(h)` (with no getter) collapses into
+ * a dead `hass: undefined` data property and the setter is silently lost.
+ */
+function mergeMethodGroups(...groups) {
+  const merged = {};
+  applyMethodGroups(merged, ...groups);
+  return merged;
+}
+
 // ── src/utils/date.js ──
 /**
  * Small local-date helpers shared by the timeline calendar and editor-facing UI.
@@ -4736,8 +4749,7 @@ _toggleRotate() {
  * Keeping this entry point stable avoids coupling callers to the internal
  * feature layout while allowing each concern to live in a focused module.
  */
-const liveMethods = Object.assign(
-  {},
+const liveMethods = mergeMethodGroups(
   liveDiscoveryMethods,
   liveEngineMethods,
   liveWebRtcMethods,
@@ -5142,8 +5154,7 @@ async _stopTalk() {
  * Keeping this entry point stable avoids coupling callers to the internal
  * feature layout while allowing each concern to live in a focused module.
  */
-const talkMethods = Object.assign(
-  {},
+const talkMethods = mergeMethodGroups(
   talkControlMethods,
   microphoneMethods,
   talkSessionMethods,
@@ -5604,8 +5615,7 @@ _scheduleReload() { clearTimeout(this._rt); this._rt=setTimeout(()=>this._loadWi
  * Keeping this entry point stable avoids coupling callers to the internal
  * feature layout while allowing each concern to live in a focused module.
  */
-const dataMethods = Object.assign(
-  {},
+const dataMethods = mergeMethodGroups(
   metadataMethods,
   dataLoadingMethods,
 );
@@ -6689,8 +6699,7 @@ _renderMediaFilter(force=false) {
  * Keeping this entry point stable avoids coupling callers to the internal
  * feature layout while allowing each concern to live in a focused module.
  */
-const browserMethods = Object.assign(
-  {},
+const browserMethods = mergeMethodGroups(
   mediaPickerMethods,
   mediaNavigationMethods,
   mediaGalleryMethods,
@@ -7221,8 +7230,7 @@ _recordingCovers(ts) {
  * Keeping this entry point stable avoids coupling callers to the internal
  * feature layout while allowing each concern to live in a focused module.
  */
-const eventPlaybackMethods = Object.assign(
-  {},
+const eventPlaybackMethods = mergeMethodGroups(
   eventPlaybackControllerMethods,
   mediaSourceMethods,
   playbackTimeMethods,
@@ -8074,8 +8082,7 @@ _toggleRecSeek(row) {
  * Keeping this entry point stable avoids coupling callers to the internal
  * feature layout while allowing each concern to live in a focused module.
  */
-const recordingPlaybackMethods = Object.assign(
-  {},
+const recordingPlaybackMethods = mergeMethodGroups(
   recordingTimeMethods,
   recordingShellMethods,
   recordingSourceMethods,
@@ -9541,8 +9548,7 @@ const timelinePlaybackSyncMethods = {
  * Keeping this entry point stable avoids coupling callers to the internal
  * feature layout while allowing each concern to live in a focused module.
  */
-const timelineInteractionMethods = Object.assign(
-  {},
+const timelineInteractionMethods = mergeMethodGroups(
   timelineFilterMethods,
   timelineCalendarMethods,
   timelineGestureMethods,
@@ -10385,8 +10391,7 @@ _reconcileTimeline(track, html) {
  * Keeping this entry point stable avoids coupling callers to the internal
  * feature layout while allowing each concern to live in a focused module.
  */
-const timelineRenderMethods = Object.assign(
-  {},
+const timelineRenderMethods = mergeMethodGroups(
   timelineModelMethods,
   timelineLiveMethods,
   timelineViewMethods,
@@ -11187,8 +11192,7 @@ const multiviewMediaMethods = {
 /**
  * Multiview behavior composed from focused playback, timeline, and media modules.
  */
-const multiviewMethods = Object.assign(
-  {},
+const multiviewMethods = mergeMethodGroups(
   multiviewCoreMethods,
   multiviewPlayerMethods,
   multiviewControllerMethods,
@@ -12251,8 +12255,7 @@ _dispatch() { this.dispatchEvent(new CustomEvent('config-changed',{detail:{confi
 
 // ── src/editor/methods.js ──
 /** Public method-group barrel for the Sightline visual editor. */
-const editorMethods = Object.assign(
-  {},
+const editorMethods = mergeMethodGroups(
   editorRegistryMethods,
   editorRenderMethods,
   editorConfigMethods,
