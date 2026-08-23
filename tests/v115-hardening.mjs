@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { liveViewMethods } from '../src/card/live/view.js';
+import { liveViewMethods, shouldShowFullscreenButton } from '../src/card/live/view.js';
 import { multiviewTimelineMethods } from '../src/card/multiview/timeline-ui.js';
 import { microphoneMethods } from '../src/card/talk/microphone.js';
 import { timelineGestureMethods } from '../src/card/timeline/interaction.js';
@@ -29,6 +29,16 @@ for(const [span,expected] of [[60,'1m'],[2700,'45m'],[21600,'6h'],[86400,'24h']]
   Object.defineProperty(globalThis,'navigator',{configurable:true,value:{mediaDevices:{enumerateDevices:async()=>[]}}});
   assert.equal(await microphoneMethods._refreshMicrophoneAvailability.call(ctx),false);
   old?Object.defineProperty(globalThis,'navigator',old):delete globalThis.navigator;
+}
+
+// Desktop Live must expose Sightline's fullscreen control. Recorded single
+// camera playback keeps using native video controls, and iOS stays suppressed.
+{
+  assert.equal(shouldShowFullscreenButton({isLive:true,inGrid:false,isIOS:false}),true);
+  assert.equal(shouldShowFullscreenButton({isLive:true,inGrid:true,isIOS:false}),true);
+  assert.equal(shouldShowFullscreenButton({isLive:false,inGrid:true,isIOS:false}),true);
+  assert.equal(shouldShowFullscreenButton({isLive:false,inGrid:false,isIOS:false}),false);
+  assert.equal(shouldShowFullscreenButton({isLive:true,inGrid:false,isIOS:true}),false);
 }
 
 // Explicit speaker control converts a user gesture into a real unmute/play attempt.

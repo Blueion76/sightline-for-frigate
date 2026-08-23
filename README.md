@@ -21,7 +21,7 @@ Sightline brings your Frigate cameras, live view, timeline, clips, recordings, r
 - Timeline range selection for downloading recording clips
 - Two-way audio for compatible go2rtc camera streams
 - Multi-camera support for up to 4 Frigate cameras
-- Single-camera, grid, and auto-rotation modes
+- Single-camera, Multiview, and auto-rotation modes
 - Full-card clip playback from grid/Multiview with an obvious return-to-live control
 - Responsive wide-screen layout: video, timeline, and media browser can sit side-by-side
 - iOS-inspired translucent/glass styling with configurable theme, tint, accent, and transparency
@@ -119,7 +119,7 @@ Sightline supports up to four Frigate cameras:
 
 ```yaml
 type: custom:sightline-card
-default_view: single
+default_view: multiview
 cameras:
   - entity: camera.front_door
     name: Front Door
@@ -134,7 +134,7 @@ cameras:
     go2rtc_stream: back_yard
 ```
 
-With multiple cameras configured you can switch cameras, use grid mode, or enable automatic rotation. Camera filters are hidden automatically when the card is operating in a single-camera context.
+With multiple cameras configured you can switch cameras, use Multiview, or enable automatic rotation. Set `default_view: multiview` to launch directly into the all-camera grid. The legacy value `default_view: grid` remains accepted for backward compatibility. Camera filters are hidden automatically when the card is operating in a single-camera context.
 
 When you open a clip while in grid/Multiview, Sightline temporarily gives playback the full card instead of squeezing the clip into one grid tile. Use the **Back to Multiview** control over the player to return to the camera grid.
 

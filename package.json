@@ -1,7 +1,7 @@
 {
   "name": "sightline-for-frigate",
-  "version": "1.1.5",
-  "description": "Sightline for Frigate \u2014 a responsive Frigate NVR dashboard card for Home Assistant",
+  "version": "1.1.6",
+  "description": "Sightline for Frigate — a responsive Frigate NVR dashboard card for Home Assistant",
   "type": "module",
   "private": true,
   "scripts": {

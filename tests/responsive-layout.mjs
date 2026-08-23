@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import { responsiveUxMethods } from '../src/card/responsive-ux.js';
+import { normalizeDefaultView } from '../src/card/core.js';
 import { timelineCalendarMethods } from '../src/card/timeline/calendar.js';
+
+// Multiview can be selected as the startup view using the public 1.1.6
+// value. The old `grid` value remains a compatibility alias, and a single
+// configured camera always falls back to the single-camera view.
+assert.equal(normalizeDefaultView('multiview',3),'multiview');
+assert.equal(normalizeDefaultView('grid',3),'multiview');
+assert.equal(normalizeDefaultView('MULTIVIEW',2),'multiview');
+assert.equal(normalizeDefaultView('multiview',1),'single');
+assert.equal(normalizeDefaultView('single',4),'single');
 
 class StyleMock {
   constructor(){ this.values=new Map(); this.priority=new Map(); }

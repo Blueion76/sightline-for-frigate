@@ -36,7 +36,7 @@ _render() {
       <input type="checkbox" name="hide-${id}" data-hide-tab="${id}" ${hiddenTabs.has(id)?'checked':''}> ${label}
     </label>`;
 
-    const defaultView = this._config?.default_view || 'single';
+    const defaultView = ['multiview','grid'].includes(this._config?.default_view) ? 'multiview' : 'single';
     const rotateOnLoad = this._config?.rotate_on_load === true;
     const tl=this._config?.timeline||{};
     const dl=this._config?.download||{};
@@ -139,9 +139,9 @@ _render() {
         <span class="field-label">View</span>
         <div class="radio-row">
           <label class="radio-lbl"><input type="radio" name="default_view" value="single" ${defaultView==='single'?'checked':''}> Single camera</label>
-          <label class="radio-lbl"><input type="radio" name="default_view" value="grid" ${defaultView==='grid'?'checked':''} ${usableCamCount<2?'disabled':''}> Grid (all cams)</label>
+          <label class="radio-lbl"><input type="radio" name="default_view" value="multiview" ${defaultView==='multiview'?'checked':''} ${usableCamCount<2?'disabled':''}> Multiview (all cameras)</label>
         </div>
-        ${usableCamCount<2?'<small class="mini-help">Grid view becomes available when at least two camera entities are configured.</small>':''}
+        ${usableCamCount<2?'<small class="mini-help">Multiview becomes available when at least two camera entities are configured.</small>':''}
         <div style="margin-top:8px">
           <label class="chk-lbl"><input type="checkbox" name="rotate_on_load" id="rotate_on_load" ${rotateOnLoad?'checked':''} ${usableCamCount<2?'disabled':''}> Auto-rotate on load</label>
         </div>
