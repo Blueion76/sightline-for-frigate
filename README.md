@@ -538,3 +538,14 @@ If you find a bug, include as much of the following as possible when opening a G
 - Browser console error, if one is present
 
 For Frigate installation or Frigate integration problems that also occur outside Sightline, use the Frigate documentation/support channels. For behavior specific to this card, open an issue in the Sightline repository.
+
+## Development
+
+Run the card locally with synthetic cameras and real video playback, without Home Assistant or Frigate:
+
+```sh
+npm ci
+npm run dev
+```
+
+Open http://127.0.0.1:5173. See [Standalone development](docs/DEVELOPMENT.md) for scenarios, browser tests, and mock boundaries.

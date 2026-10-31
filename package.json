@@ -8,9 +8,15 @@
     "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs",
     "test": "node tests/smoke.mjs && node tests/multiview.mjs && node tests/timeline-ux.mjs && node tests/media-browser.mjs && node tests/date-time-filter.mjs && node tests/responsive-layout.mjs && node tests/ios-date-selection.mjs && node tests/v115-hardening.mjs && node tests/architecture.mjs",
-    "verify": "npm run build && npm run check && npm test"
+    "verify": "npm run build && npm run check && npm test",
+    "dev": "node dev/server.mjs",
+    "test:browser": "playwright test"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "hls.js": "^1.6.16"
   }
 }
