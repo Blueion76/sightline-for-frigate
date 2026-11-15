@@ -79,6 +79,7 @@ async _setGalleryMode(tab) {
     const gallery = this.shadowRoot.querySelector('#media-gallery');
     const timeline = this.shadowRoot.querySelector('#timeline-view');
 
+    if (tab === 'live' && this._liveTabHidden()) tab = this._config.default_tab;
     if (tab === 'live') {
       this._galleryMode = '';
       this._tab = 'live';
@@ -182,7 +183,7 @@ _setTab(tab) {
     this.shadowRoot.querySelectorAll('[data-tab]').forEach(p=>p.classList.toggle('active',p.dataset.tab===tab));
     const lbl=this.shadowRoot.querySelector('#list-label');
     if (lbl) lbl.textContent=({live:'Recent events',recordings:'Recordings',clips:'Clips',snapshot:'Snapshots',reviews:'Reviews',kept:'Kept'})[tab]||tab;
-    if (tab==='live') this._showLive();
+    if (tab==='live') this._returnHome();
     if (tab==='reviews') this._loadReviews().then(()=>this._renderList());
     if (tab==='kept') this._loadKept().then(()=>this._renderList());
     this._renderList();

@@ -2,7 +2,7 @@
  * Home Assistant lifecycle, normalized configuration and shared card-level utilities.
  */
 import { VERSION, CARD_TAG, DAY, DEFAULT_ROTATE_S, ICONS, LABEL_COLORS, PALETTE, TIMELINE_GLYPHS, CAM_COLORS } from '../constants.js';
-import { cap, parseWs, labelColor, timelineGlyph, mkCamState, camDisplayName } from '../helpers.js';
+import { cap, parseWs, labelColor, timelineGlyph, mkCamState, camDisplayName, normalizeMediaTabs } from '../helpers.js';
 import { STYLES } from '../styles.js';
 
 export function normalizeDefaultView(value, cameraCount) {
@@ -60,9 +60,7 @@ setConfig(config) {
     const rawAspect=config.aspect_ratio==null || String(config.aspect_ratio).trim()==='' ? 'auto' : String(config.aspect_ratio).trim();
     const aspectValid = rawAspect==='auto' || /^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/.test(rawAspect) || (Number.isFinite(Number(rawAspect)) && Number(rawAspect)>0);
     const streamHeightNum=Number(config.stream_height);
-    const hiddenTabs = Array.isArray(config.hidden_tabs) ? config.hidden_tabs.filter(x=>['clips','recordings','reviews'].includes(String(x))) : [];
-    const requestedDefaultTab = ['live','clips','recordings','reviews'].includes(String(config.default_tab||'')) ? String(config.default_tab) : 'live';
-    const defaultTab = requestedDefaultTab !== 'live' && hiddenTabs.includes(requestedDefaultTab) ? 'live' : requestedDefaultTab;
+    const { hidden_tabs: hiddenTabs, default_tab: defaultTab } = normalizeMediaTabs(config.hidden_tabs, config.default_tab || 'live');
 
     this._config = {
       cameras,
@@ -96,6 +94,11 @@ setConfig(config) {
     for (const c of cameras) { if (!this._camCache[c.entity]) this._camCache[c.entity] = mkCamState(); }
     this._renderShell();
     this._setupMicrophoneDetection();
+    // A running card whose config now hides Live (for example while editing in
+    // the dashboard editor) must leave the Live view for a visible tab.
+    if (this._started && !this._galleryMode && this._liveTabHidden()) {
+      Promise.resolve().then(() => { if (!this._galleryMode && this._liveTabHidden()) this._setGalleryMode(this._config.default_tab); });
+    }
   },
 
 set hass(hass) {
@@ -115,6 +118,27 @@ set hass(hass) {
       this._syncStatus();
       if (this._config.theme === 'auto') this._applyCardStyle();
     }
+  },
+
+_liveTabHidden() { return !!this._config?.hidden_tabs?.includes('live'); },
+
+/**
+ * Return to the card's resting view after playback, a "Back" button or the
+ * timeline reaching LIVE. Normally that is Live. When Live is hidden it is the
+ * gallery tab the user was on (if still visible) or the configured startup tab.
+ */
+_returnHome(preferredTab=this._galleryMode) {
+    if (!this._liveTabHidden()) return this._showLive();
+    const hidden=this._config.hidden_tabs;
+    const tab=preferredTab && preferredTab!=='live' && !hidden.includes(preferredTab) ? preferredTab : this._config.default_tab;
+    return this._setGalleryMode(tab);
+  },
+
+_homeTabLabel() {
+    if (!this._liveTabHidden()) return 'Live';
+    const hidden=this._config.hidden_tabs;
+    const tab=this._galleryMode && !hidden.includes(this._galleryMode) ? this._galleryMode : this._config.default_tab;
+    return ({clips:'Clips',recordings:'Recordings',reviews:'Reviews'})[tab] || 'Live';
   },
 
 get _activeCam() { return this._config?.cameras[this._activeCamIdx] || this._config?.cameras[0]; },

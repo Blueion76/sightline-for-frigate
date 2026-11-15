@@ -155,6 +155,7 @@ _render() {
       <div class="section">
         <span class="field-label">Hidden tabs</span>
         <div class="chk-grid">
+          ${tabCheck('live','Live')}
           ${tabCheck('clips','Clips')}
           ${tabCheck('recordings','Recordings')}
           ${tabCheck('reviews','Reviews')}

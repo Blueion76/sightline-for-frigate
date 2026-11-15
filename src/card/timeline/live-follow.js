@@ -18,6 +18,7 @@ _refreshLiveFromTimeline(opts={}) {
     // with ha-camera-stream and is the source of the intermittent
     // 'Unable to start stream' state seen after timeline drags.
     const restart=opts.restart!==false;
+    const returnTab=this._galleryMode;
     this._timelineFollowingLive=true;
     this._timelineInteracting=false;
     this._resetTimelineToNow10m();
@@ -46,6 +47,10 @@ _refreshLiveFromTimeline(opts={}) {
       this._renderRange();
       this._renderTimelineZoomLabel();
     });
+    // With Live hidden, reaching the live edge still resumes the live stream,
+    // but the card must land back on a visible tab rather than a Live view
+    // that has no navigation button.
+    if (this._liveTabHidden() && !this._galleryMode) this._returnHome(returnTab);
   },
 
 _updateTimelineLive() {

@@ -68,13 +68,13 @@ function showPlaybackReturnButton(card,engine,returnToGrid) {
     button.style.cssText=PLAYBACK_BACK_STYLE;
     engine.appendChild(button);
   }
-  const label=returnToGrid?'Back to Multiview':'Back to Live';
+  const label=returnToGrid?'Back to Multiview':`Back to ${card._homeTabLabel?.()||'Live'}`;
   button.hidden=false;
   button.style.display='inline-flex';
   button.innerHTML=`${ICONS.back}<span>${label}</span>`;
   button.title=label;
   button.setAttribute('aria-label',label);
-  button.onclick=()=>card._showLive();
+  button.onclick=()=>card._returnHome();
   const icon=button.querySelector('svg');
   if(icon) {
     icon.style.width='13px';

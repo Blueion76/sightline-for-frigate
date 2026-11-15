@@ -85,6 +85,24 @@ function timelineGlyph(label) {
 
 function mkCamState() { return { clientId:'frigate', cam:'', events:[], recordings:[], recordingsLoaded:false, recordingsRangeStart:null, recordingsRangeEnd:null, recordingsLoadedAt:0, reviews:[], kept:[], filterLabels:[], filterFaces:[], filterZones:[], filterLabelNames:{}, filterZoneNames:{}, filterMetaLoaded:false, filterMetaLoading:false, filterMetaLoadedAt:0, discovered:false }; }
 
+const MEDIA_TABS = ['live','clips','recordings','reviews'];
+const MEDIA_TAB_LABELS = { live:'Live', clips:'Clips', recordings:'Recordings', reviews:'Reviews' };
+
+/**
+ * Normalize `hidden_tabs` and `default_tab` together. Any tab, including Live,
+ * may be hidden, but at least one tab always stays visible: if every tab is
+ * hidden, Live is restored. The startup tab is the requested tab when it is
+ * visible, otherwise the first visible tab in navigation order.
+ */
+function normalizeMediaTabs(hiddenIn, defaultIn) {
+  let hidden = Array.isArray(hiddenIn) ? [...new Set(hiddenIn.map(String).filter(t => MEDIA_TABS.includes(t)))] : [];
+  if (hidden.length >= MEDIA_TABS.length) hidden = hidden.filter(t => t !== 'live');
+  const visible = MEDIA_TABS.filter(t => !hidden.includes(t));
+  const requested = String(defaultIn || '');
+  const defaultTab = visible.includes(requested) ? requested : visible[0];
+  return { hidden_tabs: hidden, default_tab: defaultTab };
+}
+
 function camDisplayName(c) { return c.name || (c.entity||'').replace(/^camera\./,'').replace(/_/g,' '); }
 
 // ── src/styles.js ──
@@ -3734,9 +3752,7 @@ setConfig(config) {
     const rawAspect=config.aspect_ratio==null || String(config.aspect_ratio).trim()==='' ? 'auto' : String(config.aspect_ratio).trim();
     const aspectValid = rawAspect==='auto' || /^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/.test(rawAspect) || (Number.isFinite(Number(rawAspect)) && Number(rawAspect)>0);
     const streamHeightNum=Number(config.stream_height);
-    const hiddenTabs = Array.isArray(config.hidden_tabs) ? config.hidden_tabs.filter(x=>['clips','recordings','reviews'].includes(String(x))) : [];
-    const requestedDefaultTab = ['live','clips','recordings','reviews'].includes(String(config.default_tab||'')) ? String(config.default_tab) : 'live';
-    const defaultTab = requestedDefaultTab !== 'live' && hiddenTabs.includes(requestedDefaultTab) ? 'live' : requestedDefaultTab;
+    const { hidden_tabs: hiddenTabs, default_tab: defaultTab } = normalizeMediaTabs(config.hidden_tabs, config.default_tab || 'live');
 
     this._config = {
       cameras,
@@ -3770,6 +3786,11 @@ setConfig(config) {
     for (const c of cameras) { if (!this._camCache[c.entity]) this._camCache[c.entity] = mkCamState(); }
     this._renderShell();
     this._setupMicrophoneDetection();
+    // A running card whose config now hides Live (for example while editing in
+    // the dashboard editor) must leave the Live view for a visible tab.
+    if (this._started && !this._galleryMode && this._liveTabHidden()) {
+      Promise.resolve().then(() => { if (!this._galleryMode && this._liveTabHidden()) this._setGalleryMode(this._config.default_tab); });
+    }
   },
 
 set hass(hass) {
@@ -3789,6 +3810,27 @@ set hass(hass) {
       this._syncStatus();
       if (this._config.theme === 'auto') this._applyCardStyle();
     }
+  },
+
+_liveTabHidden() { return !!this._config?.hidden_tabs?.includes('live'); },
+
+/**
+ * Return to the card's resting view after playback, a "Back" button or the
+ * timeline reaching LIVE. Normally that is Live. When Live is hidden it is the
+ * gallery tab the user was on (if still visible) or the configured startup tab.
+ */
+_returnHome(preferredTab=this._galleryMode) {
+    if (!this._liveTabHidden()) return this._showLive();
+    const hidden=this._config.hidden_tabs;
+    const tab=preferredTab && preferredTab!=='live' && !hidden.includes(preferredTab) ? preferredTab : this._config.default_tab;
+    return this._setGalleryMode(tab);
+  },
+
+_homeTabLabel() {
+    if (!this._liveTabHidden()) return 'Live';
+    const hidden=this._config.hidden_tabs;
+    const tab=this._galleryMode && !hidden.includes(this._galleryMode) ? this._galleryMode : this._config.default_tab;
+    return ({clips:'Clips',recordings:'Recordings',reviews:'Reviews'})[tab] || 'Live';
   },
 
 get _activeCam() { return this._config?.cameras[this._activeCamIdx] || this._config?.cameras[0]; },
@@ -4634,7 +4676,7 @@ _renderStreamCtrl() {
     // so Live is highlighted on first render and after every return to Live.
     const activeMediaTab = this._galleryMode || (this._tab === 'live' ? 'live' : '');
     const hiddenTabs=new Set(this._config.hidden_tabs||[]);
-    const mediaBtn = (id, label, icon) => (id!=='live' && hiddenTabs.has(id)) ? '' : `<button class="media-nav-btn${activeMediaTab===id?' active':''}" data-gallery-tab="${id}" title="${label}" aria-label="${label}">${icon}<span>${label}</span></button>`;
+    const mediaBtn = (id, label, icon) => hiddenTabs.has(id) ? '' : `<button class="media-nav-btn${activeMediaTab===id?' active':''}" data-gallery-tab="${id}" title="${label}" aria-label="${label}">${icon}<span>${label}</span></button>`;
     const liveBtn = mediaBtn('live','Live',ICONS.live);
     const clipsBtn = mediaBtn('clips','Clips',ICONS.clips);
     const recordingsBtn = mediaBtn('recordings','Recordings',ICONS.recordings);
@@ -6294,6 +6336,7 @@ async _setGalleryMode(tab) {
     const gallery = this.shadowRoot.querySelector('#media-gallery');
     const timeline = this.shadowRoot.querySelector('#timeline-view');
 
+    if (tab === 'live' && this._liveTabHidden()) tab = this._config.default_tab;
     if (tab === 'live') {
       this._galleryMode = '';
       this._tab = 'live';
@@ -6397,7 +6440,7 @@ _setTab(tab) {
     this.shadowRoot.querySelectorAll('[data-tab]').forEach(p=>p.classList.toggle('active',p.dataset.tab===tab));
     const lbl=this.shadowRoot.querySelector('#list-label');
     if (lbl) lbl.textContent=({live:'Recent events',recordings:'Recordings',clips:'Clips',snapshot:'Snapshots',reviews:'Reviews',kept:'Kept'})[tab]||tab;
-    if (tab==='live') this._showLive();
+    if (tab==='live') this._returnHome();
     if (tab==='reviews') this._loadReviews().then(()=>this._renderList());
     if (tab==='kept') this._loadKept().then(()=>this._renderList());
     this._renderList();
@@ -9889,6 +9932,7 @@ _refreshLiveFromTimeline(opts={}) {
     // with ha-camera-stream and is the source of the intermittent
     // 'Unable to start stream' state seen after timeline drags.
     const restart=opts.restart!==false;
+    const returnTab=this._galleryMode;
     this._timelineFollowingLive=true;
     this._timelineInteracting=false;
     this._resetTimelineToNow10m();
@@ -9917,6 +9961,10 @@ _refreshLiveFromTimeline(opts={}) {
       this._renderRange();
       this._renderTimelineZoomLabel();
     });
+    // With Live hidden, reaching the live edge still resumes the live stream,
+    // but the card must land back on a visible tab rather than a Live view
+    // that has no navigation button.
+    if (this._liveTabHidden() && !this._galleryMode) this._returnHome(returnTab);
   },
 
 _updateTimelineLive() {
@@ -10828,9 +10876,9 @@ const multiviewControllerMethods = {
 
     const slots=[...grid.querySelectorAll('.grid-slot:not(.placeholder)')];
     const back=document.createElement('button');
-    back.id='multi-recording-back-live';back.type='button';back.textContent='Back to Live';back.setAttribute('aria-label','Back to Live');
+    const backLabel=`Back to ${this._homeTabLabel()}`;back.id='multi-recording-back-live';back.type='button';back.textContent=backLabel;back.setAttribute('aria-label',backLabel);
     back.style.cssText='position:absolute;left:12px;top:12px;z-index:90;min-height:36px;padding:7px 12px;border:1px solid rgba(255,255,255,.24);border-radius:999px;background:rgba(16,16,18,.78);color:#fff;font:650 12px/1 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);cursor:pointer';
-    back.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();this._showLive();});
+    back.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();this._returnHome();});
     grid.appendChild(back);
 
     const entries=await Promise.all(this._config.cameras.map((camera,index)=>this._multiRecordingPrepareEntry(camera,index,slots[index],session)));
@@ -11516,13 +11564,13 @@ function showPlaybackReturnButton(card,engine,returnToGrid) {
     button.style.cssText=PLAYBACK_BACK_STYLE;
     engine.appendChild(button);
   }
-  const label=returnToGrid?'Back to Multiview':'Back to Live';
+  const label=returnToGrid?'Back to Multiview':`Back to ${card._homeTabLabel?.()||'Live'}`;
   button.hidden=false;
   button.style.display='inline-flex';
   button.innerHTML=`${ICONS.back}<span>${label}</span>`;
   button.title=label;
   button.setAttribute('aria-label',label);
-  button.onclick=()=>card._showLive();
+  button.onclick=()=>card._returnHome();
   const icon=button.querySelector('svg');
   if(icon) {
     icon.style.width='13px';
@@ -11974,6 +12022,7 @@ _render() {
       <div class="section">
         <span class="field-label">Hidden tabs</span>
         <div class="chk-grid">
+          ${tabCheck('live','Live')}
           ${tabCheck('clips','Clips')}
           ${tabCheck('recordings','Recordings')}
           ${tabCheck('reviews','Reviews')}
@@ -12233,9 +12282,11 @@ _u() {
     };
     c.media = { reviewed_default: this.querySelector('#reviewed_default')?.value || 'all' };
 
-    // Startup behavior. Hidden tabs cannot be selected as the initial view.
-    const requestedTab=this.querySelector('#default_tab')?.value||'live';
-    c.default_tab=requestedTab!=='live'&&hidden.includes(requestedTab)?'live':requestedTab;
+    // Startup behavior. Hidden tabs cannot be selected as the initial view, and
+    // at least one tab always remains visible.
+    const tabs=normalizeMediaTabs(hidden, this.querySelector('#default_tab')?.value||'live');
+    c.hidden_tabs=tabs.hidden_tabs;
+    c.default_tab=tabs.default_tab;
     c.autoplay_latest_clip=this.querySelector('#autoplay_latest_clip')?.checked===true;
 
     // two-way audio
