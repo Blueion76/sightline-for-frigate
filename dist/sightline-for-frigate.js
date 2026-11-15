@@ -3823,7 +3823,33 @@ _returnHome(preferredTab=this._galleryMode) {
     if (!this._liveTabHidden()) return this._showLive();
     const hidden=this._config.hidden_tabs;
     const tab=preferredTab && preferredTab!=='live' && !hidden.includes(preferredTab) ? preferredTab : this._config.default_tab;
-    return this._setGalleryMode(tab);
+    // Leaving playback goes through _showLive(), which snaps the timeline to
+    // the current time. With Live hidden there is no live view to return to,
+    // so keep the timeline where the user was (the clip/review just watched,
+    // or LIVE if they dragged there) and restore it once the tab is open.
+    const saved={
+      start:this._winStart, end:this._winEnd, focus:this._timelineFocusTs,
+      following:this._timelineFollowingLive, selected:this._timelineSelected,
+    };
+    const restore=()=>{
+      if(!Number.isFinite(Number(saved.start)) || !Number.isFinite(Number(saved.end)) || saved.end<=saved.start) return;
+      this._winStart=saved.start;
+      this._winEnd=saved.end;
+      this._timelineFocusTs=saved.focus;
+      this._scrubTarget=saved.focus;
+      this._timelineFollowingLive=saved.following;
+      this._timelineSelected=saved.selected;
+      this._renderTimeline?.(true);
+      this._renderRange?.();
+      this._renderTimelineZoomLabel?.();
+      this._updateTimelineDateLabel?.(saved.focus);
+    };
+    const opened=this._setGalleryMode(tab);
+    restore();
+    return Promise.resolve(opened).then(()=>{
+      // Only re-assert if nothing else moved the timeline while the tab loaded.
+      if(this._galleryMode===tab && !this._timelineInteracting && !this._playing) restore();
+    });
   },
 
 /**

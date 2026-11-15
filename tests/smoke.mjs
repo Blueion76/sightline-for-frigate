@@ -96,6 +96,24 @@ startup._autoplayed='unchanged';
 await startup._applyInitialMediaState();
 assert.equal(startup._autoplayed, 'unchanged', 'startup state must not replay twice');
 
+const back = new Card();
+back._config = { default_tab:'reviews', hidden_tabs:['live','recordings'] };
+for (const m of ['_renderTimeline','_renderRange','_renderTimelineZoomLabel','_updateTimelineDateLabel']) back[m] = () => {};
+back._winStart = 2700; back._winEnd = 3300; back._timelineFocusTs = 3012; back._timelineFollowingLive = false; back._timelineSelected = 'c3';
+back._galleryMode = 'clips';
+back._playing = { id:'c3' };
+back._setGalleryMode = async (tab) => {
+  // Mirrors the real path: leaving playback runs _showLive(), which snaps the timeline to now.
+  back._playing = null; back._winStart = 99000; back._winEnd = 99600; back._timelineFocusTs = 99300; back._timelineFollowingLive = true;
+  await Promise.resolve();
+  back._galleryMode = tab;
+};
+await back._returnHome();
+assert.equal(back._galleryMode, 'clips', 'Back returns to the tab the user came from');
+assert.deepEqual([back._winStart, back._winEnd, back._timelineFocusTs], [2700, 3300, 3012], 'with Live hidden, Back must keep the timeline on the watched clip');
+assert.equal(back._timelineFollowingLive, false, 'with Live hidden, Back must not resume LIVE-follow');
+assert.equal(back._timelineSelected, 'c3');
+
 const latest = new Card();
 latest._config = { default_tab:'reviews', hidden_tabs:['live','recordings'] };
 latest._eventsMode = 'camera';
