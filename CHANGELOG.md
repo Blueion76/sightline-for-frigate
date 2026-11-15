@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- `hidden_tabs` now accepts `live`, and the visual editor has a matching **Live** checkbox. With Live hidden, the card starts on `default_tab` (or the first visible tab), and "Back" buttons and reaching LIVE on the timeline return to the last visible media tab (for example **Back to Clips**) instead of a Live view with no navigation button. At least one tab always remains visible; hiding every tab keeps Live. With Live hidden, Reviews and Clips rest on their newest item instead of a live stream: on first load, page refresh, switching tabs and after **Back**, the newest review or retained clip is loaded paused in the player (without a Back button) and the timeline is centered on it. Multiview keeps its live grid.
+- `hidden_tabs` now accepts `live`, and the visual editor has a matching **Live** checkbox. With Live hidden, the card starts on `default_tab` (or the first visible tab), and "Back" buttons and reaching LIVE on the timeline return to the last visible media tab (for example **Back to Clips**) instead of a Live view with no navigation button. At least one tab always remains visible; hiding every tab keeps Live. With Live hidden, Reviews and Clips rest on their newest item instead of a live stream: on first load, page refresh, switching tabs and after **Back**, the newest review or retained clip is loaded paused in the player (without a Back button) and the timeline is centered on it. The timeline's **Jump to now** button becomes **Jump to latest** and returns to that newest item. Multiview keeps its live grid.
 
 ## 1.1.6
 

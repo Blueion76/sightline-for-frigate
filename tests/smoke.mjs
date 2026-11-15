@@ -121,6 +121,15 @@ latest._showHomeMedia('clips');
 assert.equal(latest._timelineFocusTs, 2500, 'Clips home item is the newest retained clip');
 assert.equal(latest._timelineSelected, 'c3');
 assert.deepEqual(JSON.parse(JSON.stringify(opened.pop())), ['clip','c3',{autoplay:false,home:true}]);
+const goNowOpened = opened.length;
+latest._galleryMode = 'reviews';
+latest._renderStreamCtrl = () => {};
+latest._resetTimelineToNow10m = () => { throw new Error('Jump to latest must not reset the timeline to now'); };
+latest._goNow();
+assert.equal(opened.length, goNowOpened + 1, 'with Live hidden, Jump to now opens the newest item');
+assert.equal(opened.at(-1)[1], 'e3');
+assert.equal(latest._timelineFocusTs, 3000, 'with Live hidden, Jump to now focuses the newest review');
+
 latest._viewMode = 'grid';
 assert.equal(latest._shouldShowHomeMedia('reviews'), false, 'Multiview keeps its live grid');
 latest._viewMode = 'single';

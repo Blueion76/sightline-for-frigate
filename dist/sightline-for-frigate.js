@@ -5763,7 +5763,7 @@ _renderShell() {
             <div id="timeline-view" style="${this._config.timeline.enabled?'':'display:none'}">
               <div class="tl-head">
                 <div class="tl-tools">
-                  <button class="tool" id="now-btn" title="Jump to now">⟳</button>
+                  <button class="tool" id="now-btn" title="${this._config.hidden_tabs?.includes('live')?'Jump to latest':'Jump to now'}">⟳</button>
                   ${this._config.timeline.show_zoom_controls ? `<div class="tl-zoom-controls" role="group" aria-label="Timeline zoom">
                     <button class="tool tl-zoom-btn" id="tl-zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
                     <button class="tool tl-zoom-level" id="tl-zoom-level" title="Reset timeline zoom">${Math.round(this._config.timeline.default_minutes)}m</button>
@@ -8220,6 +8220,13 @@ const recordingPlaybackMethods = mergeMethodGroups(
 const actionMethods = {
 _goNow() {
     this._downloadRange=null;
+    // Live hidden: "now" has no live view to show, so the button jumps to the
+    // newest review/clip instead (paused, timeline on it), matching the tab's
+    // resting view. Multiview, Recordings and empty tabs still jump to now.
+    if(this._galleryMode && this._shouldShowHomeMedia?.(this._galleryMode) && this._showHomeMedia(this._galleryMode)) {
+      this._renderStreamCtrl();
+      return;
+    }
     this._resetTimelineToNow10m();
     this._loadWindow(true);
     this._renderTimeline(true);
