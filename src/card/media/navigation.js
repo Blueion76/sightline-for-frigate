@@ -147,7 +147,11 @@ async _setGalleryMode(tab) {
     }
     // Live hidden: the tab's resting view is its newest item, loaded paused,
     // with the timeline on it. Skip if the user already opened something.
-    if (loadHomeMedia && this._galleryMode === requestedTab && !this._playing) this._showHomeMedia(tab);
+    if (loadHomeMedia && this._galleryMode === requestedTab && !this._playing) {
+      // Nothing to show (no reviews/clips yet): fall back to the live stream
+      // rather than leaving the player empty.
+      if (!this._showHomeMedia(tab) && !this._engine) this._mountEngine();
+    }
     requestAnimationFrame(() => {
       this._syncColHeight();
       const g=this.shadowRoot.querySelector('#media-gallery');

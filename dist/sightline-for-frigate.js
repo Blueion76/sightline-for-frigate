@@ -3955,7 +3955,9 @@ async _start() {
     this._winStart = now - initialTimelineSpan/2; this._winEnd = now + initialTimelineSpan/2; this._timelineZoom = 3600/initialTimelineSpan;
     this._timelineFollowingLive = true; this._timelineWasLiveBeforeGesture = false; this._timelineLiveCrossed = false;
     if (this._config.default_view === 'multiview' && this._config.cameras.length > 1) this._setViewMode('grid');
-    await this._mountEngine();
+    // With Live hidden the startup tab rests on its newest item (paused), so
+    // don't open a live stream only to replace it a moment later.
+    if (!this._shouldShowHomeMedia?.(this._config.default_tab)) await this._mountEngine();
     await this._loadWindow(true, true);
     await this._applyInitialMediaState();
     this._loadCalendar(); this._subscribe();
@@ -6465,7 +6467,11 @@ async _setGalleryMode(tab) {
     }
     // Live hidden: the tab's resting view is its newest item, loaded paused,
     // with the timeline on it. Skip if the user already opened something.
-    if (loadHomeMedia && this._galleryMode === requestedTab && !this._playing) this._showHomeMedia(tab);
+    if (loadHomeMedia && this._galleryMode === requestedTab && !this._playing) {
+      // Nothing to show (no reviews/clips yet): fall back to the live stream
+      // rather than leaving the player empty.
+      if (!this._showHomeMedia(tab) && !this._engine) this._mountEngine();
+    }
     requestAnimationFrame(() => {
       this._syncColHeight();
       const g=this.shadowRoot.querySelector('#media-gallery');
