@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fixed opening a clip from the Clips browser, Reviews, or autoplay leaving the timeline pinned to LIVE. Opening an event clip now exits LIVE-follow mode and centers the timeline on the clip's start time at the current zoom level, matching timeline marker clicks, so the playhead follows the clip as it plays.
+
 ## 1.1.6
 
 - Restored the dedicated fullscreen button on desktop single-camera Live. It fullscreens the existing `#eng-wrap` WebRTC wrapper without replacing the stream, remains available in Multiview, stays hidden for iOS live MediaStreams, and avoids duplicating the native fullscreen control on single-camera recorded playback.
