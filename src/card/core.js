@@ -134,6 +134,44 @@ _returnHome(preferredTab=this._galleryMode) {
     return this._setGalleryMode(tab);
   },
 
+/**
+ * Center the timeline on the newest item shown by a media tab: the latest
+ * review on Reviews, the latest retained clip on Clips. Keeps the current zoom
+ * span and leaves LIVE-follow mode. Recordings have no discrete "latest item"
+ * (the newest recording is now), so the timeline is left as is.
+ */
+_focusTimelineOnLatestMedia(tab=this._galleryMode) {
+    let latest=null;
+    if(tab==='reviews') {
+      latest=(this._filterMediaReviews?.(this._reviews) || this._reviews || [])
+        .reduce((best,r)=>Number(r?.start_time)>Number(best?.start_time ?? -Infinity)?r:best,null);
+    } else if(tab==='clips') {
+      const source=this._eventsMode==='all'?this._allDisplayEvents():this._events;
+      latest=(this._filterMediaEvents?.(source) || source || []).filter(ev=>ev?.has_clip)
+        .reduce((best,ev)=>Number(ev?.start_time)>Number(best?.start_time ?? -Infinity)?ev:best,null);
+    }
+    const ts=Number(latest?.start_time);
+    if(!Number.isFinite(ts) || ts<=0) return null;
+    const span=Math.max(300,Math.min(86400,Number(this._winEnd-this._winStart)||600));
+    let ns=Math.floor(ts-span/2);
+    let ne=Math.floor(ts+span/2);
+    if(ns<0){ne-=ns;ns=0;}
+    this._timelineFollowingLive=false;
+    this._timelineInteracting=false;
+    if(tab==='clips') this._timelineSelected=String(latest.id);
+    this._timelineFocusTs=ts;
+    this._scrubTarget=ts;
+    this._winStart=ns;
+    this._winEnd=ne;
+    this._exhausted=false;
+    this._renderTimeline?.(true);
+    this._renderRange?.();
+    this._renderTimelineZoomLabel?.();
+    this._updateTimelineDateLabel?.(ts);
+    this._scheduleTimelineDataLoad?.();
+    return ts;
+  },
+
 _homeTabLabel() {
     if (!this._liveTabHidden()) return 'Live';
     const hidden=this._config.hidden_tabs;
@@ -149,6 +187,10 @@ async _applyInitialMediaState() {
     const tab=this._config?.default_tab||'live';
     if(tab==='live') return;
     await this._setGalleryMode(tab);
+    // With Live hidden there is no live view to anchor the timeline to, so a
+    // first load or page refresh starts the timeline at the newest item of the
+    // startup tab instead of the current time.
+    if(this._liveTabHidden?.() && this._galleryMode===tab) this._focusTimelineOnLatestMedia(tab);
     if(tab!=='clips' || !this._config?.autoplay_latest_clip || this._galleryMode!=='clips') return;
     const source=this._eventsMode==='all'?this._allDisplayEvents():this._events;
     const latest=this._filterMediaEvents(source).filter(ev=>ev?.has_clip).sort((a,b)=>Number(b.start_time||0)-Number(a.start_time||0))[0];

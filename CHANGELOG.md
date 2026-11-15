@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- `hidden_tabs` now accepts `live`, and the visual editor has a matching **Live** checkbox. With Live hidden, the card starts on `default_tab` (or the first visible tab), and "Back" buttons and reaching LIVE on the timeline return to the last visible media tab (for example **Back to Clips**) instead of a Live view with no navigation button. At least one tab always remains visible; hiding every tab keeps Live.
+- `hidden_tabs` now accepts `live`, and the visual editor has a matching **Live** checkbox. With Live hidden, the card starts on `default_tab` (or the first visible tab), and "Back" buttons and reaching LIVE on the timeline return to the last visible media tab (for example **Back to Clips**) instead of a Live view with no navigation button. At least one tab always remains visible; hiding every tab keeps Live. With Live hidden, a first load or page refresh centers the timeline on the newest review (Reviews) or retained clip (Clips) of the startup tab instead of the current time.
 
 ## 1.1.6
 
