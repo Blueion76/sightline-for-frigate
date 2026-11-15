@@ -65,9 +65,9 @@ export const multiviewControllerMethods = {
 
     const slots=[...grid.querySelectorAll('.grid-slot:not(.placeholder)')];
     const back=document.createElement('button');
-    back.id='multi-recording-back-live';back.type='button';back.textContent='Back to Live';back.setAttribute('aria-label','Back to Live');
+    const backLabel=`Back to ${this._homeTabLabel()}`;back.id='multi-recording-back-live';back.type='button';back.textContent=backLabel;back.setAttribute('aria-label',backLabel);
     back.style.cssText='position:absolute;left:12px;top:12px;z-index:90;min-height:36px;padding:7px 12px;border:1px solid rgba(255,255,255,.24);border-radius:999px;background:rgba(16,16,18,.78);color:#fff;font:650 12px/1 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);cursor:pointer';
-    back.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();this._showLive();});
+    back.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();this._returnHome();});
     grid.appendChild(back);
 
     const entries=await Promise.all(this._config.cameras.map((camera,index)=>this._multiRecordingPrepareEntry(camera,index,slots[index],session)));

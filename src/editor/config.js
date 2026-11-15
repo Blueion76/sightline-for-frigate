@@ -1,4 +1,5 @@
 /** Read editor controls, normalize card configuration, and emit HA updates. */
+import { normalizeMediaTabs } from '../helpers.js';
 export const editorConfigMethods = {
 setConfig(c) { this._config=c; this._render(); },
 
@@ -84,9 +85,11 @@ _u() {
     };
     c.media = { reviewed_default: this.querySelector('#reviewed_default')?.value || 'all' };
 
-    // Startup behavior. Hidden tabs cannot be selected as the initial view.
-    const requestedTab=this.querySelector('#default_tab')?.value||'live';
-    c.default_tab=requestedTab!=='live'&&hidden.includes(requestedTab)?'live':requestedTab;
+    // Startup behavior. Hidden tabs cannot be selected as the initial view, and
+    // at least one tab always remains visible.
+    const tabs=normalizeMediaTabs(hidden, this.querySelector('#default_tab')?.value||'live');
+    c.hidden_tabs=tabs.hidden_tabs;
+    c.default_tab=tabs.default_tab;
     c.autoplay_latest_clip=this.querySelector('#autoplay_latest_clip')?.checked===true;
 
     // two-way audio
