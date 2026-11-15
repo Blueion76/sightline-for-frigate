@@ -112,8 +112,10 @@ async _setGalleryMode(tab) {
     this._timelineInteracting=false;
     this._downloadRange=null;
     ++this._timelineSeekSeq;
+    const loadHomeMedia=this._shouldShowHomeMedia?.(tab)===true;
     if (this._playing || this._activePlaybackCleanup || this._playbackSession) {
-      this._showLive();
+      this._suppressLiveMount=loadHomeMedia;
+      try { this._showLive(); } finally { this._suppressLiveMount=false; }
     }
 
     this._galleryMode = tab;
@@ -143,6 +145,9 @@ async _setGalleryMode(tab) {
       await this._loadWindow(true);
       if (this._galleryMode === requestedTab) this._renderGallery();
     }
+    // Live hidden: the tab's resting view is its newest item, loaded paused,
+    // with the timeline on it. Skip if the user already opened something.
+    if (loadHomeMedia && this._galleryMode === requestedTab && !this._playing) this._showHomeMedia(tab);
     requestAnimationFrame(() => {
       this._syncColHeight();
       const g=this.shadowRoot.querySelector('#media-gallery');

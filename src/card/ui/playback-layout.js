@@ -68,6 +68,13 @@ function showPlaybackReturnButton(card,engine,returnToGrid) {
     button.style.cssText=PLAYBACK_BACK_STYLE;
     engine.appendChild(button);
   }
+  if(card._homeMediaActive && !returnToGrid) {
+    // The paused home item (Live hidden) is the resting view; there is
+    // nothing to go back to.
+    button.hidden=true;
+    button.style.display='none';
+    return;
+  }
   const label=returnToGrid?'Back to Multiview':`Back to ${card._homeTabLabel?.()||'Live'}`;
   button.hidden=false;
   button.style.display='inline-flex';

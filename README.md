@@ -393,7 +393,7 @@ If `bg_color` is set, that color becomes the tint for the translucent card surfa
 | `autoplay_latest_clip` | `false` | When starting on Clips, automatically open the newest retained clip once. |
 | `rotate_on_load` | `false` | Begin automatic camera rotation. |
 | `rotate_seconds` | `0` | Rotation interval; `0` uses Sightline's 30-second default. |
-| `hidden_tabs` | `[]` | Hide any of `live`, `clips`, `recordings`, and `reviews`. At least one tab always stays visible. When `live` is hidden, the card starts on `default_tab` (or the first visible tab), and Back buttons and reaching LIVE on the timeline return to the last visible tab instead of Live. On first load the timeline starts at the newest review or clip of the startup tab. |
+| `hidden_tabs` | `[]` | Hide any of `live`, `clips`, `recordings`, and `reviews`. At least one tab always stays visible. When `live` is hidden, the card starts on `default_tab` (or the first visible tab), and Back buttons and reaching LIVE on the timeline return to the last visible tab instead of Live. Reviews and Clips then rest on their newest item, loaded paused with the timeline on it, instead of a live stream (Multiview keeps its live grid). |
 | `stream_type` | `webrtc` | `webrtc` or `hls`. |
 | `aspect_ratio` | `auto` | Automatic, preset, or custom `W:H` player ratio. |
 | `stream_height` | unset | Explicit player height in `vh`; overrides aspect-ratio height. |

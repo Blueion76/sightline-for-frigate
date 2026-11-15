@@ -3823,33 +3823,8 @@ _returnHome(preferredTab=this._galleryMode) {
     if (!this._liveTabHidden()) return this._showLive();
     const hidden=this._config.hidden_tabs;
     const tab=preferredTab && preferredTab!=='live' && !hidden.includes(preferredTab) ? preferredTab : this._config.default_tab;
-    // Leaving playback goes through _showLive(), which snaps the timeline to
-    // the current time. With Live hidden there is no live view to return to,
-    // so keep the timeline where the user was (the clip/review just watched,
-    // or LIVE if they dragged there) and restore it once the tab is open.
-    const saved={
-      start:this._winStart, end:this._winEnd, focus:this._timelineFocusTs,
-      following:this._timelineFollowingLive, selected:this._timelineSelected,
-    };
-    const restore=()=>{
-      if(!Number.isFinite(Number(saved.start)) || !Number.isFinite(Number(saved.end)) || saved.end<=saved.start) return;
-      this._winStart=saved.start;
-      this._winEnd=saved.end;
-      this._timelineFocusTs=saved.focus;
-      this._scrubTarget=saved.focus;
-      this._timelineFollowingLive=saved.following;
-      this._timelineSelected=saved.selected;
-      this._renderTimeline?.(true);
-      this._renderRange?.();
-      this._renderTimelineZoomLabel?.();
-      this._updateTimelineDateLabel?.(saved.focus);
-    };
-    const opened=this._setGalleryMode(tab);
-    restore();
-    return Promise.resolve(opened).then(()=>{
-      // Only re-assert if nothing else moved the timeline while the tab loaded.
-      if(this._galleryMode===tab && !this._timelineInteracting && !this._playing) restore();
-    });
+    // _setGalleryMode() loads the tab's newest item paused (see _showHomeMedia).
+    return this._setGalleryMode(tab);
   },
 
 /**
@@ -3858,16 +3833,38 @@ _returnHome(preferredTab=this._galleryMode) {
  * span and leaves LIVE-follow mode. Recordings have no discrete "latest item"
  * (the newest recording is now), so the timeline is left as is.
  */
-_focusTimelineOnLatestMedia(tab=this._galleryMode) {
-    let latest=null;
-    if(tab==='reviews') {
-      latest=(this._filterMediaReviews?.(this._reviews) || this._reviews || [])
-        .reduce((best,r)=>Number(r?.start_time)>Number(best?.start_time ?? -Infinity)?r:best,null);
-    } else if(tab==='clips') {
+_latestMediaItem(tab=this._galleryMode) {
+    const newest=(list)=>(list||[]).reduce((best,x)=>Number(x?.start_time)>Number(best?.start_time ?? -Infinity)?x:best,null);
+    if(tab==='reviews') return newest(this._filterMediaReviews?.(this._reviews) || this._reviews);
+    if(tab==='clips') {
       const source=this._eventsMode==='all'?this._allDisplayEvents():this._events;
-      latest=(this._filterMediaEvents?.(source) || source || []).filter(ev=>ev?.has_clip)
-        .reduce((best,ev)=>Number(ev?.start_time)>Number(best?.start_time ?? -Infinity)?ev:best,null);
+      return newest((this._filterMediaEvents?.(source) || source || []).filter(ev=>ev?.has_clip));
     }
+    return null;
+  },
+
+/** Live hidden + single-camera view + a tab with discrete items. Multiview keeps its live grid. */
+_shouldShowHomeMedia(tab) {
+    return this._liveTabHidden?.()===true && (tab==='reviews' || tab==='clips') && this._viewMode!=='grid';
+  },
+
+/**
+ * Live hidden: show the tab's newest review/clip paused, with the timeline on
+ * it. Used on first load, tab switches and Back, so the card never falls
+ * back to a live stream the user chose to hide.
+ */
+_showHomeMedia(tab=this._galleryMode) {
+    const item=this._latestMediaItem(tab);
+    if(!item) return null;
+    this._focusTimelineOnLatestMedia(tab);
+    const opts={autoplay:false, home:true};
+    if(tab==='clips') return this._showClip(item, opts);
+    const eventId=item?.data?.detections?.[0];
+    return eventId ? this._showClipById(eventId, opts) : null;
+  },
+
+_focusTimelineOnLatestMedia(tab=this._galleryMode) {
+    const latest=this._latestMediaItem(tab);
     const ts=Number(latest?.start_time);
     if(!Number.isFinite(ts) || ts<=0) return null;
     const span=Math.max(300,Math.min(86400,Number(this._winEnd-this._winStart)||600));
@@ -3905,10 +3902,6 @@ async _applyInitialMediaState() {
     const tab=this._config?.default_tab||'live';
     if(tab==='live') return;
     await this._setGalleryMode(tab);
-    // With Live hidden there is no live view to anchor the timeline to, so a
-    // first load or page refresh starts the timeline at the newest item of the
-    // startup tab instead of the current time.
-    if(this._liveTabHidden?.() && this._galleryMode===tab) this._focusTimelineOnLatestMedia(tab);
     if(tab!=='clips' || !this._config?.autoplay_latest_clip || this._galleryMode!=='clips') return;
     const source=this._eventsMode==='all'?this._allDisplayEvents():this._events;
     const latest=this._filterMediaEvents(source).filter(ev=>ev?.has_clip).sort((a,b)=>Number(b.start_time||0)-Number(a.start_time||0))[0];
@@ -6437,8 +6430,10 @@ async _setGalleryMode(tab) {
     this._timelineInteracting=false;
     this._downloadRange=null;
     ++this._timelineSeekSeq;
+    const loadHomeMedia=this._shouldShowHomeMedia?.(tab)===true;
     if (this._playing || this._activePlaybackCleanup || this._playbackSession) {
-      this._showLive();
+      this._suppressLiveMount=loadHomeMedia;
+      try { this._showLive(); } finally { this._suppressLiveMount=false; }
     }
 
     this._galleryMode = tab;
@@ -6468,6 +6463,9 @@ async _setGalleryMode(tab) {
       await this._loadWindow(true);
       if (this._galleryMode === requestedTab) this._renderGallery();
     }
+    // Live hidden: the tab's resting view is its newest item, loaded paused,
+    // with the timeline on it. Skip if the user already opened something.
+    if (loadHomeMedia && this._galleryMode === requestedTab && !this._playing) this._showHomeMedia(tab);
     requestAnimationFrame(() => {
       this._syncColHeight();
       const g=this.shadowRoot.querySelector('#media-gallery');
@@ -6950,6 +6948,7 @@ _enter() {
 
 _showLive() {
     const wasPlaying=!!this._playing;
+    this._homeMediaActive=false;
     ++this._playSeq;
     this._cancelActivePlayback();
     this._tab='live';
@@ -6975,6 +6974,9 @@ _showLive() {
     // If the live engine is already mounted (normal gallery -> Live or tapping
     // Live twice), keep that exact WebRTC session. Recreating it on every tap
     // causes visible reconnects and is especially fragile on iOS.
+    // When a tab with Live hidden is about to load its paused home item, do not
+    // start (and immediately tear down) a live stream in between.
+    if(this._suppressLiveMount) return;
     if(!this._engine){ this._mountEngine(); }
     else if(wasPlaying){ this._engine.style.display='block'; }
   },
@@ -7015,8 +7017,11 @@ _handleMediaImageError(e) {
     parent?.classList.add('thumb-failed');
   },
 
-async _showClip(ev) {
+async _showClip(ev, opts={}) {
     if (!ev) return;
+    // opts.home: the resting "home" item shown when Live is hidden. It loads
+    // paused and has no Back button, because the user is already "back".
+    this._homeMediaActive=opts.home===true;
     // Event playback owns the media pipeline. Clear any hourly-recording state
     // before mounting the clip so stale recording callbacks/segment maps cannot
     // reinterpret clip currentTime=0 as the first second of the previous hour.
@@ -7043,7 +7048,7 @@ async _showClip(ev) {
       const url=await this._resolveFrigateMedia(ev,'clip');
       if(this._playSeq!==token) return;
       viewer.innerHTML='';
-      const player=this._createHlsPlayer(url,{autoplay:true});
+      const player=this._createHlsPlayer(url,{autoplay:opts.autoplay!==false});
       player.style.cssText='width:100%;height:100%;display:block;background:#000';
       viewer.appendChild(player);
       this._attachTimelineMediaClock(player, Number(ev.start_time)||this._timelineFocusTs||Math.floor(Date.now()/1000), token);
@@ -7053,10 +7058,11 @@ async _showClip(ev) {
     }
   },
 
-async _showClipById(id) {
+async _showClipById(id, opts={}) {
     if(!id) return;
     const ev=this._allDisplayEvents().find(e=>e.id===id);
-    if(ev) return this._showClip(ev);
+    if(ev) return this._showClip(ev, opts);
+    this._homeMediaActive=opts.home===true;
     // Same isolation as _showClip(), including the review-browser path where
     // only an event id is available.
     clearTimeout(this._wt);
@@ -7079,7 +7085,7 @@ async _showClipById(id) {
       const url=await this._resolveFrigateEventMediaId(id,'clips');
       if(this._playSeq!==token) return;
       viewer.innerHTML='';
-      const player=this._createHlsPlayer(url,{autoplay:true});
+      const player=this._createHlsPlayer(url,{autoplay:opts.autoplay!==false});
       player.style.cssText='width:100%;height:100%;display:block;background:#000';
       viewer.appendChild(player);
       const eventStart=Number(this._allDisplayEvents().find(e=>e.id===id)?.start_time);
@@ -11631,6 +11637,13 @@ function showPlaybackReturnButton(card,engine,returnToGrid) {
     button.id='playback-back-live';
     button.style.cssText=PLAYBACK_BACK_STYLE;
     engine.appendChild(button);
+  }
+  if(card._homeMediaActive && !returnToGrid) {
+    // The paused home item (Live hidden) is the resting view; there is
+    // nothing to go back to.
+    button.hidden=true;
+    button.style.display='none';
+    return;
   }
   const label=returnToGrid?'Back to Multiview':`Back to ${card._homeTabLabel?.()||'Live'}`;
   button.hidden=false;
