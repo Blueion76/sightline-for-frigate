@@ -6769,6 +6769,33 @@ async _openInGridSlot(id) {
     }
   },
 
+_focusTimelineOnEvent(ev) {
+    // Opening an event (timeline marker, Clips card, Review, autoplay) is an
+    // explicit playback seek. Keep the current zoom level, but leave LIVE
+    // follow mode and center the event under the fixed playhead so the
+    // timeline and video begin at the same wall-clock moment. Without this,
+    // clips opened from the browser left the timeline pinned to "now".
+    const ts=Number(ev?.start_time);
+    if(!Number.isFinite(ts)) return ts;
+    const span=Math.max(300,Math.min(86400,Number(this._winEnd-this._winStart)||600));
+    let ns=Math.floor(ts-span/2);
+    let ne=Math.floor(ts+span/2);
+    if(ns<0){ne-=ns;ns=0;}
+    this._timelineFollowingLive=false;
+    this._timelineInteracting=false;
+    this._timelineSelected=String(ev.id);
+    this._timelineFocusTs=ts;
+    this._scrubTarget=ts;
+    this._winStart=ns;
+    this._winEnd=ne;
+    this._exhausted=false;
+    this._renderTimeline(true);
+    this._renderRange();
+    this._renderTimelineZoomLabel();
+    this._scheduleTimelineDataLoad();
+    return ts;
+  },
+
 _activateTimelineEvent(id) {
     if(!id) return;
     const ev=this._timelineEvents().find(e=>String(e.id)===String(id))
@@ -6788,28 +6815,7 @@ _activateTimelineEvent(id) {
     this._scrubGestureInvalidated=false;
     ++this._timelineSeekSeq;
 
-    const ts=Number(ev.start_time);
-    if(Number.isFinite(ts)) {
-      // Clicking a timeline marker/thumbnail is an explicit playback seek. Keep
-      // the current zoom level, but center the selected event under the fixed
-      // playhead so the timeline and video begin at the same wall-clock moment.
-      const span=Math.max(300,Math.min(86400,Number(this._winEnd-this._winStart)||600));
-      let ns=Math.floor(ts-span/2);
-      let ne=Math.floor(ts+span/2);
-      if(ns<0){ne-=ns;ns=0;}
-      this._timelineFollowingLive=false;
-      this._timelineInteracting=false;
-      this._timelineSelected=String(ev.id);
-      this._timelineFocusTs=ts;
-      this._scrubTarget=ts;
-      this._winStart=ns;
-      this._winEnd=ne;
-      this._exhausted=false;
-      this._renderTimeline(true);
-      this._renderRange();
-      this._renderTimelineZoomLabel();
-      this._scheduleTimelineDataLoad();
-    }
+    const ts=this._focusTimelineOnEvent(ev);
 
     // Prefer the actual Frigate event clip. If this event has no retained clip,
     // fall back to continuous recording at the event's exact timestamp.
@@ -6919,6 +6925,7 @@ async _showClip(ev) {
     this._playingSourceEnd=null;
     this._playingRecordings=[];
     this._playingInpointOffset=0;
+    this._focusTimelineOnEvent(ev);
     // Advanced Camera Card represents Frigate event video as HLS and resolves
     // the media-source content ID through Home Assistant. Use the same route
     // here so iOS does not depend on the progressive /clip.mp4 proxy.
