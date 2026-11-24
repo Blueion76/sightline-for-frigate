@@ -79,6 +79,7 @@ async _setGalleryMode(tab) {
     const gallery = this.shadowRoot.querySelector('#media-gallery');
     const timeline = this.shadowRoot.querySelector('#timeline-view');
 
+    if (tab === 'live' && this._liveTabHidden()) tab = this._config.default_tab;
     if (tab === 'live') {
       this._galleryMode = '';
       this._tab = 'live';
@@ -111,8 +112,10 @@ async _setGalleryMode(tab) {
     this._timelineInteracting=false;
     this._downloadRange=null;
     ++this._timelineSeekSeq;
+    const loadHomeMedia=this._shouldShowHomeMedia?.(tab)===true;
     if (this._playing || this._activePlaybackCleanup || this._playbackSession) {
-      this._showLive();
+      this._suppressLiveMount=loadHomeMedia;
+      try { this._showLive(); } finally { this._suppressLiveMount=false; }
     }
 
     this._galleryMode = tab;
@@ -141,6 +144,13 @@ async _setGalleryMode(tab) {
       // timeline scrub cannot leave either browser empty or scoped to 10 minutes.
       await this._loadWindow(true);
       if (this._galleryMode === requestedTab) this._renderGallery();
+    }
+    // Live hidden: the tab's resting view is its newest item, loaded paused,
+    // with the timeline on it. Skip if the user already opened something.
+    if (loadHomeMedia && this._galleryMode === requestedTab && !this._playing) {
+      // Nothing to show (no reviews/clips yet): fall back to the live stream
+      // rather than leaving the player empty.
+      if (!this._showHomeMedia(tab) && !this._engine) this._mountEngine();
     }
     requestAnimationFrame(() => {
       this._syncColHeight();
@@ -182,7 +192,7 @@ _setTab(tab) {
     this.shadowRoot.querySelectorAll('[data-tab]').forEach(p=>p.classList.toggle('active',p.dataset.tab===tab));
     const lbl=this.shadowRoot.querySelector('#list-label');
     if (lbl) lbl.textContent=({live:'Recent events',recordings:'Recordings',clips:'Clips',snapshot:'Snapshots',reviews:'Reviews',kept:'Kept'})[tab]||tab;
-    if (tab==='live') this._showLive();
+    if (tab==='live') this._returnHome();
     if (tab==='reviews') this._loadReviews().then(()=>this._renderList());
     if (tab==='kept') this._loadKept().then(()=>this._renderList());
     this._renderList();

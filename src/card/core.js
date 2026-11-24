@@ -2,7 +2,7 @@
  * Home Assistant lifecycle, normalized configuration and shared card-level utilities.
  */
 import { VERSION, CARD_TAG, DAY, DEFAULT_ROTATE_S, ICONS, LABEL_COLORS, PALETTE, TIMELINE_GLYPHS, CAM_COLORS } from '../constants.js';
-import { cap, parseWs, labelColor, timelineGlyph, mkCamState, camDisplayName } from '../helpers.js';
+import { cap, parseWs, labelColor, timelineGlyph, mkCamState, camDisplayName, normalizeMediaTabs } from '../helpers.js';
 import { STYLES } from '../styles.js';
 
 export function normalizeDefaultView(value, cameraCount) {
@@ -60,9 +60,7 @@ setConfig(config) {
     const rawAspect=config.aspect_ratio==null || String(config.aspect_ratio).trim()==='' ? 'auto' : String(config.aspect_ratio).trim();
     const aspectValid = rawAspect==='auto' || /^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/.test(rawAspect) || (Number.isFinite(Number(rawAspect)) && Number(rawAspect)>0);
     const streamHeightNum=Number(config.stream_height);
-    const hiddenTabs = Array.isArray(config.hidden_tabs) ? config.hidden_tabs.filter(x=>['clips','recordings','reviews'].includes(String(x))) : [];
-    const requestedDefaultTab = ['live','clips','recordings','reviews'].includes(String(config.default_tab||'')) ? String(config.default_tab) : 'live';
-    const defaultTab = requestedDefaultTab !== 'live' && hiddenTabs.includes(requestedDefaultTab) ? 'live' : requestedDefaultTab;
+    const { hidden_tabs: hiddenTabs, default_tab: defaultTab } = normalizeMediaTabs(config.hidden_tabs, config.default_tab || 'live');
 
     this._config = {
       cameras,
@@ -96,6 +94,11 @@ setConfig(config) {
     for (const c of cameras) { if (!this._camCache[c.entity]) this._camCache[c.entity] = mkCamState(); }
     this._renderShell();
     this._setupMicrophoneDetection();
+    // A running card whose config now hides Live (for example while editing in
+    // the dashboard editor) must leave the Live view for a visible tab.
+    if (this._started && !this._galleryMode && this._liveTabHidden()) {
+      Promise.resolve().then(() => { if (!this._galleryMode && this._liveTabHidden()) this._setGalleryMode(this._config.default_tab); });
+    }
   },
 
 set hass(hass) {
@@ -115,6 +118,88 @@ set hass(hass) {
       this._syncStatus();
       if (this._config.theme === 'auto') this._applyCardStyle();
     }
+  },
+
+_liveTabHidden() { return !!this._config?.hidden_tabs?.includes('live'); },
+
+/**
+ * Return to the card's resting view after playback, a "Back" button or the
+ * timeline reaching LIVE. Normally that is Live. When Live is hidden it is the
+ * gallery tab the user was on (if still visible) or the configured startup tab.
+ */
+_returnHome(preferredTab=this._galleryMode) {
+    if (!this._liveTabHidden()) return this._showLive();
+    const hidden=this._config.hidden_tabs;
+    const tab=preferredTab && preferredTab!=='live' && !hidden.includes(preferredTab) ? preferredTab : this._config.default_tab;
+    // _setGalleryMode() loads the tab's newest item paused (see _showHomeMedia).
+    return this._setGalleryMode(tab);
+  },
+
+/**
+ * Center the timeline on the newest item shown by a media tab: the latest
+ * review on Reviews, the latest retained clip on Clips. Keeps the current zoom
+ * span and leaves LIVE-follow mode. Recordings have no discrete "latest item"
+ * (the newest recording is now), so the timeline is left as is.
+ */
+_latestMediaItem(tab=this._galleryMode) {
+    const newest=(list)=>(list||[]).reduce((best,x)=>Number(x?.start_time)>Number(best?.start_time ?? -Infinity)?x:best,null);
+    if(tab==='reviews') return newest(this._filterMediaReviews?.(this._reviews) || this._reviews);
+    if(tab==='clips') {
+      const source=this._eventsMode==='all'?this._allDisplayEvents():this._events;
+      return newest((this._filterMediaEvents?.(source) || source || []).filter(ev=>ev?.has_clip));
+    }
+    return null;
+  },
+
+/** Live hidden + single-camera view + a tab with discrete items. Multiview keeps its live grid. */
+_shouldShowHomeMedia(tab) {
+    return this._liveTabHidden?.()===true && (tab==='reviews' || tab==='clips') && this._viewMode!=='grid';
+  },
+
+/**
+ * Live hidden: show the tab's newest review/clip paused, with the timeline on
+ * it. Used on first load, tab switches and Back, so the card never falls
+ * back to a live stream the user chose to hide.
+ */
+_showHomeMedia(tab=this._galleryMode) {
+    const item=this._latestMediaItem(tab);
+    if(!item) return null;
+    this._focusTimelineOnLatestMedia(tab);
+    const opts={autoplay:false, home:true};
+    if(tab==='clips') return this._showClip(item, opts);
+    const eventId=item?.data?.detections?.[0];
+    return eventId ? this._showClipById(eventId, opts) : null;
+  },
+
+_focusTimelineOnLatestMedia(tab=this._galleryMode) {
+    const latest=this._latestMediaItem(tab);
+    const ts=Number(latest?.start_time);
+    if(!Number.isFinite(ts) || ts<=0) return null;
+    const span=Math.max(300,Math.min(86400,Number(this._winEnd-this._winStart)||600));
+    let ns=Math.floor(ts-span/2);
+    let ne=Math.floor(ts+span/2);
+    if(ns<0){ne-=ns;ns=0;}
+    this._timelineFollowingLive=false;
+    this._timelineInteracting=false;
+    if(tab==='clips') this._timelineSelected=String(latest.id);
+    this._timelineFocusTs=ts;
+    this._scrubTarget=ts;
+    this._winStart=ns;
+    this._winEnd=ne;
+    this._exhausted=false;
+    this._renderTimeline?.(true);
+    this._renderRange?.();
+    this._renderTimelineZoomLabel?.();
+    this._updateTimelineDateLabel?.(ts);
+    this._scheduleTimelineDataLoad?.();
+    return ts;
+  },
+
+_homeTabLabel() {
+    if (!this._liveTabHidden()) return 'Live';
+    const hidden=this._config.hidden_tabs;
+    const tab=this._galleryMode && !hidden.includes(this._galleryMode) ? this._galleryMode : this._config.default_tab;
+    return ({clips:'Clips',recordings:'Recordings',reviews:'Reviews'})[tab] || 'Live';
   },
 
 get _activeCam() { return this._config?.cameras[this._activeCamIdx] || this._config?.cameras[0]; },
@@ -178,7 +263,9 @@ async _start() {
     this._winStart = now - initialTimelineSpan/2; this._winEnd = now + initialTimelineSpan/2; this._timelineZoom = 3600/initialTimelineSpan;
     this._timelineFollowingLive = true; this._timelineWasLiveBeforeGesture = false; this._timelineLiveCrossed = false;
     if (this._config.default_view === 'multiview' && this._config.cameras.length > 1) this._setViewMode('grid');
-    await this._mountEngine();
+    // With Live hidden the startup tab rests on its newest item (paused), so
+    // don't open a live stream only to replace it a moment later.
+    if (!this._shouldShowHomeMedia?.(this._config.default_tab)) await this._mountEngine();
     await this._loadWindow(true, true);
     await this._applyInitialMediaState();
     this._loadCalendar(); this._subscribe();

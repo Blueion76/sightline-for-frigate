@@ -139,6 +139,7 @@ _enter() {
 
 _showLive() {
     const wasPlaying=!!this._playing;
+    this._homeMediaActive=false;
     ++this._playSeq;
     this._cancelActivePlayback();
     this._tab='live';
@@ -164,6 +165,9 @@ _showLive() {
     // If the live engine is already mounted (normal gallery -> Live or tapping
     // Live twice), keep that exact WebRTC session. Recreating it on every tap
     // causes visible reconnects and is especially fragile on iOS.
+    // When a tab with Live hidden is about to load its paused home item, do not
+    // start (and immediately tear down) a live stream in between.
+    if(this._suppressLiveMount) return;
     if(!this._engine){ this._mountEngine(); }
     else if(wasPlaying){ this._engine.style.display='block'; }
   },
@@ -204,8 +208,11 @@ _handleMediaImageError(e) {
     parent?.classList.add('thumb-failed');
   },
 
-async _showClip(ev) {
+async _showClip(ev, opts={}) {
     if (!ev) return;
+    // opts.home: the resting "home" item shown when Live is hidden. It loads
+    // paused and has no Back button, because the user is already "back".
+    this._homeMediaActive=opts.home===true;
     // Event playback owns the media pipeline. Clear any hourly-recording state
     // before mounting the clip so stale recording callbacks/segment maps cannot
     // reinterpret clip currentTime=0 as the first second of the previous hour.
@@ -233,7 +240,7 @@ async _showClip(ev) {
       const url=await this._resolveFrigateMedia(ev,'clip');
       if(this._playSeq!==token) return;
       viewer.innerHTML='';
-      const player=this._createHlsPlayer(url,{autoplay:true});
+      const player=this._createHlsPlayer(url,{autoplay:opts.autoplay!==false});
       player.style.cssText='width:100%;height:100%;display:block;background:#000';
       viewer.appendChild(player);
       this._attachTimelineMediaClock(player, Number(ev.start_time)||this._timelineFocusTs||Math.floor(Date.now()/1000), token);
@@ -243,10 +250,11 @@ async _showClip(ev) {
     }
   },
 
-async _showClipById(id) {
+async _showClipById(id, opts={}) {
     if(!id) return;
     const ev=this._allDisplayEvents().find(e=>e.id===id);
-    if(ev) return this._showClip(ev);
+    if(ev) return this._showClip(ev, opts);
+    this._homeMediaActive=opts.home===true;
     // Same isolation as _showClip(), including the review-browser path where
     // only an event id is available.
     clearTimeout(this._wt);
@@ -269,7 +277,7 @@ async _showClipById(id) {
       const url=await this._resolveFrigateEventMediaId(id,'clips');
       if(this._playSeq!==token) return;
       viewer.innerHTML='';
-      const player=this._createHlsPlayer(url,{autoplay:true});
+      const player=this._createHlsPlayer(url,{autoplay:opts.autoplay!==false});
       player.style.cssText='width:100%;height:100%;display:block;background:#000';
       viewer.appendChild(player);
       const eventStart=Number(this._allDisplayEvents().find(e=>e.id===id)?.start_time);

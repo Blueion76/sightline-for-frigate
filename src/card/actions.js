@@ -9,6 +9,13 @@ import { STYLES } from '../styles.js';
 export const actionMethods = {
 _goNow() {
     this._downloadRange=null;
+    // Live hidden: "now" has no live view to show, so the button jumps to the
+    // newest review/clip instead (paused, timeline on it), matching the tab's
+    // resting view. Multiview, Recordings and empty tabs still jump to now.
+    if(this._galleryMode && this._shouldShowHomeMedia?.(this._galleryMode) && this._showHomeMedia(this._galleryMode)) {
+      this._renderStreamCtrl();
+      return;
+    }
     this._resetTimelineToNow10m();
     this._loadWindow(true);
     this._renderTimeline(true);

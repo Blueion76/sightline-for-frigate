@@ -200,7 +200,7 @@ _renderStreamCtrl() {
     // so Live is highlighted on first render and after every return to Live.
     const activeMediaTab = this._galleryMode || (this._tab === 'live' ? 'live' : '');
     const hiddenTabs=new Set(this._config.hidden_tabs||[]);
-    const mediaBtn = (id, label, icon) => (id!=='live' && hiddenTabs.has(id)) ? '' : `<button class="media-nav-btn${activeMediaTab===id?' active':''}" data-gallery-tab="${id}" title="${label}" aria-label="${label}">${icon}<span>${label}</span></button>`;
+    const mediaBtn = (id, label, icon) => hiddenTabs.has(id) ? '' : `<button class="media-nav-btn${activeMediaTab===id?' active':''}" data-gallery-tab="${id}" title="${label}" aria-label="${label}">${icon}<span>${label}</span></button>`;
     const liveBtn = mediaBtn('live','Live',ICONS.live);
     const clipsBtn = mediaBtn('clips','Clips',ICONS.clips);
     const recordingsBtn = mediaBtn('recordings','Recordings',ICONS.recordings);
