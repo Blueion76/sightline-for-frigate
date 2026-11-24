@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sightline · Local preview</title><link rel="stylesheet" href="/dev/preview.css"></head>
+<body>
+<header>
+  <p class="eyebrow">SIGHTLINE <span>DEVELOPER PREVIEW</span></p>
+  <form id="controls" aria-label="Preview controls">
+    <label>Scenario<select name="scenario"><option value="populated">Populated</option><option value="empty">Empty library</option><option value="offline">Cameras offline</option><option value="slow">Slow responses</option></select></label>
+    <label>Viewport<select name="viewport"><option value="desktop">Desktop</option><option value="tablet">Tablet · 820px</option><option value="mobile">Mobile · 390px</option></select></label>
+    <label>Theme<select name="theme"><option value="dark">Dark</option><option value="light">Light</option></select></label>
+    <label>Cameras<select name="cameras"><option value="1">Single camera</option><option value="3">Three cameras</option></select></label>
+    <button type="button" id="new-event">Simulate event</button><button type="button" id="reset">Reset fixtures</button>
+  </form>
+  <details id="requests"><summary>Mock HA requests <span id="request-count">0</span></summary><ol id="request-log"></ol></details>
+</header>
+<main>
+  <p id="scenario-note" class="sr-only" role="status"></p>
+  <div class="stage"><section id="preview" aria-label="Sightline card preview"></section></div>
+</main>
+<script type="module" src="/dev/preview.mjs"></script>
+</body></html>
