@@ -29,7 +29,7 @@ The card class is composed from method groups with property descriptors. This pr
 
 ## Build
 
-The project intentionally has no runtime or build dependencies. `scripts/build.mjs` flattens the ES modules in dependency order into the single HACS artifact.
+The production bundle intentionally has no runtime or build dependencies. Development-only dependencies support the standalone preview and browser tests; see [DEVELOPMENT.md](DEVELOPMENT.md). `scripts/build.mjs` flattens the ES modules in dependency order into the single HACS artifact.
 
 ```bash
 npm ci
