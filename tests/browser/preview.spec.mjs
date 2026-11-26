@@ -34,12 +34,17 @@ test('clip uses real HLS decoding and native seeking events',async({page})=>{
 });
 test('favorites and review actions persist through API reloads',async({page})=>{
   await ready(page);
-  await clipRows(page).first().locator('[data-fav]').click();
+  const clip = clipRows(page).first();
+  const favorite = clip.getByRole('button',{name:'Add to favorites'});
+  await expect(favorite).toHaveAttribute('title','Add to favorites');
+  await favorite.click();
   await expect.poll(()=>page.evaluate(()=>window.preview.mock.fixtures.events[0].retain_indefinitely)).toBe(true);
   await page.evaluate(()=>window.preview.card._loadWindow(true));
   await expect.poll(()=>page.evaluate(()=>window.preview.card._events.find(ev=>ev.id==='front_door-0').retain_indefinitely)).toBe(true);
+  await expect(clip.getByRole('button',{name:'Remove from favorites'})).toHaveAttribute('title','Remove from favorites');
   await card(page).locator('[data-gallery-tab="reviews"]').click();
-  const mark=card(page).locator('.media-gallery-grid [data-mark]').first();
+  const mark=card(page).locator('.media-gallery-grid').getByRole('button',{name:'Mark as reviewed'}).first();
+  await expect(mark).toHaveAttribute('title','Mark as reviewed');
   const id=await mark.locator('..').getAttribute('data-review-id');
   await mark.click();
   await expect.poll(()=>page.evaluate(id=>window.preview.mock.fixtures.reviews.find(r=>r.id===id)?.has_been_reviewed,id)).toBe(true);
