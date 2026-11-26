@@ -108,16 +108,25 @@ _updateTimelineLive() {
     // the viewport. That clamp was the cause of the post-zoom "stuck event"
     // artifact: an old marker/card remained pinned to the screen edge until
     // the timeline eventually crossed its original timestamp again.
+    const trackPx=this._timelineTrackHeight(track);
+    track.querySelectorAll('.t-duration').forEach(el=>{
+      const a=Math.max(s,Number(el.dataset.start));
+      const b=Math.min(e,Number(el.dataset.end));
+      if(!byId.has(String(el.dataset.eventId)) || !Number.isFinite(a) || !Number.isFinite(b) || b<=a) {
+        el.style.visibility='hidden'; return;
+      }
+      el.style.visibility='';
+      el.style.top=`${yPct(b)}%`;
+      el.style.height=`${((b-a)/span)*trackPx}px`;
+    });
     track.querySelectorAll('.t-ev').forEach(el=>{
       const ev=byId.get(String(el.dataset.tick));
       const a=Number(el.dataset.start);
       const b=Number(el.dataset.end);
       const anchor=Number.isFinite(Number(el.dataset.ts)) ? Number(el.dataset.ts) : Number(ev?.start_time);
       const overlaps=Number.isFinite(a)&&Number.isFinite(b) ? (b>=s && a<=e) : !!ev;
-      // Never pin a stale event to the top/bottom edge. Its duration may still
-      // overlap the window, but the class glyph belongs at its real timestamp.
-      // Once that anchor leaves the viewport, hide it until a full reconcile
-      // promotes a new in-window detection from the same cluster.
+      // The marker belongs at its real timestamp. Its separate duration bar
+      // may still overlap the window after this marker has left it.
       if(!ev || !overlaps || !Number.isFinite(anchor) || anchor<s || anchor>e) {
         el.style.visibility='hidden'; el.style.pointerEvents='none'; return;
       }
@@ -128,13 +137,13 @@ _updateTimelineLive() {
       const ev=byId.get(String(el.dataset.eventId));
       if(!ev) { el.style.visibility='hidden'; el.style.pointerEvents='none'; return; }
       const anchor=Number.isFinite(Number(el.dataset.ts)) ? Number(el.dataset.ts) : Number(ev.start_time);
-      if(!Number.isFinite(anchor) || anchor<s || anchor>e) {
+      const y=(.5+(focus-anchor)/span)*trackPx;
+      const overscan=this._timelinePreviewOverscanPx();
+      if(!Number.isFinite(anchor) || y < -overscan || y > trackPx+overscan) {
         el.style.visibility='hidden'; el.style.pointerEvents='none'; return;
       }
       el.style.visibility=''; el.style.pointerEvents='';
-      const trackPx=Math.max(track.clientHeight||420,360);
-      const cardH=el.offsetHeight||92;
-      const y=(yPct(anchor)/100)*trackPx;
+      const cardH=el.offsetHeight||this._timelineConfiguredPreviewHeight();
       el.style.top=`${y-cardH/2}px`;
     });
     track.querySelectorAll('.t-rec').forEach(el=>{

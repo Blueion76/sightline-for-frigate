@@ -98,12 +98,9 @@ _renderTimeline(forceFull=false) {
     const s=this._winStart,e=this._winEnd,span=Math.max(1,e-s);
     if(!Number.isFinite(Number(this._timelineFocusTs))) this._timelineFocusTs=e;
     const focus=Number.isFinite(Number(this._timelineFocusTs)) ? Number(this._timelineFocusTs) : e;
-    // Cluster the complete loaded event set first, then crop clusters to the
-    // viewport. Clustering only visible events changes a cluster's identity at
-    // the viewport edge after zoom/pan and can leave an old thumbnail/marker
-    // visually pinned until the window crosses that event again.
-    const clusters=this._timelineClusters(this._timelineEvents())
-      .filter(cluster=>Number(cluster.end)>=s && Number(cluster.start)<=e);
+    // Keep grouping independent of the viewport. Duration bars, markers and
+    // preview boxes each have different visible bounds and are culled below.
+    const clusters=this._timelineClusters(this._timelineEvents());
     // Scrypted-style centered playhead: the selected wall-clock time sits at
     // the visual center while the timeline itself scrolls underneath it.
     const yPct = ts => Math.max(0,Math.min(100,50 + ((focus-Number(ts))/span)*100));
@@ -153,10 +150,9 @@ _renderTimeline(forceFull=false) {
     // Render Scrypted-style detection rows: a blue rail marker plus a separate
     // horizontal lane of monochrome class glyphs. Nearby activity bursts share
     // the same row, and repeated classes collapse to one glyph.
-    // A cluster may overlap the viewport after its first event has already
-    // scrolled away. In that case anchor to the first *actual* detection still
-    // inside the window instead of clamping the old cluster start to an edge.
-    const trackPx=Math.max(track.clientHeight||420,360);
+    // Choose stable, real timestamps from the complete clusters. Never move
+    // an anchor onto the viewport edge just to keep another artifact visible.
+    const trackPx=this._timelineTrackHeight(track);
     const metrics=this._timelineResponsiveMetrics(track);
     track.style.setProperty('--tl-glyph-size',`${metrics.glyphPx}px`);
     track.style.setProperty('--tl-glyph-gap',`${metrics.glyphGapPx}px`);
@@ -164,7 +160,7 @@ _renderTimeline(forceFull=false) {
     track.style.setProperty('--tl-event-lane',`${metrics.eventLanePx}px`);
     track.style.setProperty('--tl-dot-size',`${metrics.dotPx}px`);
     const timelineItems=clusters.map(cluster=>{
-      const ev=this._timelineClusterAnchor(cluster,s,e);
+      const ev=this._timelineClusterAnchor(cluster,-Infinity,Infinity);
       return ev ? {cluster,ev,ts:Number(ev.start_time)} : null;
     }).filter(Boolean);
     const visualGroups=this._timelineVisualGroups(timelineItems,span,trackPx);
@@ -172,6 +168,16 @@ _renderTimeline(forceFull=false) {
     visualGroups.forEach(group=>{
       const {anchorItem,ts:markerTs}=group;
       const {cluster,ev}=anchorItem;
+      // Duration belongs to the entire event interval, independently of the
+      // start marker. Newer time is above older time on this vertical track.
+      const durationStart=Math.min(...group.items.map(item=>Number(item.cluster.start)));
+      const durationEnd=Number(group.endTs);
+      const a=Math.max(s,durationStart), b=Math.min(e,durationEnd);
+      if(b>a) {
+        const top=yPct(b), height=((b-a)/span)*trackPx;
+        html+=`<div class="t-duration" data-event-id="${ev.id}" data-start="${durationStart}" data-end="${durationEnd}" style="top:${top}%;height:${height}px" aria-hidden="true"></div>`;
+      }
+      if(markerTs<s || markerTs>e) return;
       const pct=yPct(markerTs);
       const selected=group.events.some(x=>String(x.id)===String(this._timelineSelected));
       const info=ev._tl||this._timelineLabelInfo(ev);
@@ -183,33 +189,32 @@ _renderTimeline(forceFull=false) {
       const shownLabels=allLabels.slice(0,metrics.maxGlyphs);
       const glyphs=this._config.timeline.show_glyphs ? shownLabels
         .map(label=>`<span class="t-glyph">${timelineGlyph(label.key)}</span>`).join('') : '';
-      const durationEnd=Math.min(e,Math.max(markerTs,Number(group.endTs)||Number(cluster.end)));
-      const durationPx=Math.max(3,((durationEnd-markerTs)/span)*trackPx);
       const clusterClass=group.totalDetections>1?' clustered':'';
       const labelText=group.labels.map(x=>x.display).join(', ')||info.display;
       const aria=group.totalDetections>1
         ? `${labelText} detection cluster at ${this._timelineTime(markerTs)} (${group.totalDetections} detections)`
         : `${info.display} at ${this._timelineTime(markerTs)}`;
-      html+=`<button class="t-ev ${selected?'selected':''}${clusterClass}" data-tick="${ev.id}" data-ts="${markerTs}" data-start="${group.startTs}" data-end="${group.endTs}" style="top:${pct}%" aria-label="${aria}"><span class="t-duration" style="height:${durationPx}px"></span><span class="t-dot"><span class="t-glyph-stack">${glyphs}</span></span><span class="t-connector"></span></button>`;
+      html+=`<button class="t-ev ${selected?'selected':''}${clusterClass}" data-tick="${ev.id}" data-ts="${markerTs}" data-start="${group.startTs}" data-end="${group.endTs}" style="top:${pct}%" aria-label="${aria}"><span class="t-dot"><span class="t-glyph-stack">${glyphs}</span></span><span class="t-connector"></span></button>`;
     });
 
     // Promote a sparse set of representative detection moments into thumbnail
-    // cards. Use the same true in-window anchor as the glyph so cards cannot
-    // remain glued to the viewport edge while their event scrolls away.
-    const cardH=Math.max(82,Math.min(118,trackPx*.19)), gap=Math.max(8,Math.min(14,trackPx*.018));
+    // cards. Retain cards slightly beyond the viewport so their visible tails
+    // disappear through the track's clipping boundary rather than popping out.
+    const cardH=this._timelineConfiguredPreviewHeight(), gap=Math.max(8,Math.min(14,trackPx*.018));
     // Fit previews to the *actual* rendered timeline height. The old 4-mobile /
     // 6-desktop cap hid perfectly valid thumbnails on tall phones, tablets and
     // portrait dashboards even when there was plenty of vertical room.
+    const overscan=this._timelinePreviewOverscanPx();
     const configuredThumbMax=Math.max(0,Math.round(Number(this._config?.timeline?.max_thumbnails ?? 12)));
     const maxCards=this._config.timeline.show_thumbnails && configuredThumbMax>0
-      ? Math.max(1,Math.min(configuredThumbMax,Math.floor((trackPx+gap)/(cardH+gap)))) : 0;
+      ? Math.max(1,Math.min(configuredThumbMax,Math.ceil((trackPx+2*overscan+gap)/(cardH+gap)))) : 0;
     const candidates=visualGroups.map(group=>({
       group,
       cluster:group.anchorItem.cluster,
       ev:group.anchorItem.ev,
       ts:group.ts,
-      y:(yPct(group.ts)/100)*trackPx
-    }));
+      y:(.5+(focus-Number(group.ts))/span)*trackPx
+    })).filter(c=>c.y>=-overscan && c.y<=trackPx+overscan);
     const chosen=[];
     const selectedCandidate=this._timelineSelected
       ? candidates.find(c=>c.group.events.some(ev=>String(ev.id)===String(this._timelineSelected)))
