@@ -829,7 +829,7 @@ ${STYLES}
   z-index:9 !important;
   overflow:visible !important;
 }
-.card .t-ev .t-duration{
+.card .tl-track > .t-duration{
   position:absolute;
   left:calc(var(--tl-rail) - 3px);
   top:0;
@@ -963,7 +963,7 @@ ${STYLES}
 }
 
 /* monochrome timeline glyphs + no sticky edge events. */
-.card .t-ev .t-duration{
+.card .tl-track > .t-duration{
   width:3px !important;
   left:calc(var(--tl-rail) - 1px) !important;
   background:rgba(245,245,247,.28) !important;
@@ -1052,10 +1052,11 @@ ${STYLES}
   --tl-dot-size:15px;
   --tl-content:calc(var(--tl-rail) + var(--tl-event-lane));
 }
-.card .t-ev .t-duration{
+.card .tl-track > .t-duration{
   left:calc(var(--tl-rail) - 5px) !important;
   width:10px !important;
-  min-height:8px !important;
+  min-height:0 !important;
+  z-index:8;
   border-radius:999px !important;
   background:#4b9cf5 !important;
   box-shadow:none !important;

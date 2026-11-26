@@ -412,7 +412,9 @@ _wireScrub() {
       this._timelineInteracting=true;
       if (this._playing || this._activePlaybackCleanup) this._invalidatePlaybackForTimelineMove();
       clearTimeout(this._wt);
-      const shift=Math.round(delta/Math.max(1,rect.height)*span);
+      // Trackpads emit subpixel deltas. Keep fractional timestamps throughout
+      // the gesture so slow movement accumulates instead of rounding to zero.
+      const shift=delta/Math.max(1,rect.height)*span;
       let ns=this._winStart+shift, ne=this._winEnd+shift;
       let nf=(this._timelineFocusTs ?? ((this._winStart+this._winEnd)/2))+shift;
       const now=Math.floor(Date.now()/1000);
@@ -426,7 +428,7 @@ _wireScrub() {
       const crossedLive = previousFocus < now - 1 && nf >= now - 1;
       if(ns<0){const a=-ns;ns+=a;ne+=a;nf+=a;}
       this._winStart=ns;this._winEnd=ne;this._exhausted=false;
-      this._timelineFocusTs=Math.max(ns,Math.min(ne,Math.round(nf)));
+      this._timelineFocusTs=Math.max(ns,Math.min(ne,nf));
       if (crossedLive) {
         // Defer the live transition to the settled wheel callback so a burst
         // of wheel events cannot mount multiple live players.

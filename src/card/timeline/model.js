@@ -7,6 +7,22 @@
 import { cap } from '../../helpers.js';
 
 export const timelineModelMethods = {
+_timelineTrackHeight(track) {
+    // Use the same rendered coordinate space for animation and reconciliation.
+    // A minimum height here makes previews jump in compact desktop timelines.
+    return Math.max(1, Number(track?.clientHeight) || Number(track?.getBoundingClientRect?.().height) || 420);
+  },
+
+_timelineConfiguredPreviewHeight() {
+    return Math.max(48,Math.min(140,Math.round(Number(this._config?.timeline?.thumbnail_size ?? 84))));
+  },
+
+_timelinePreviewOverscanPx() {
+    // Keep the card while its box can still overlap the clipped track, plus a
+    // small buffer so it is already mounted before scrolling into view.
+    return this._timelineConfiguredPreviewHeight()/2 + 16;
+  },
+
 _timelineLabelInfo(ev) {
     const raw = this._normalizeObjectLabel(ev?.label ?? ev?.data?.label ?? '').toLowerCase();
     const aliases = {
@@ -299,6 +315,7 @@ _timelineRecordingGaps(start, end) {
 _timelineNodeKey(el) {
     if (el.classList.contains('t-ev')) return `ev:${el.dataset.tick||''}`;
     if (el.classList.contains('t-preview')) return `preview:${el.dataset.eventId||''}`;
+    if (el.classList.contains('t-duration')) return `duration:${el.dataset.eventId||''}`;
     if (el.classList.contains('t-rec')) return `rec:${el.dataset.start||''}:${el.dataset.end||''}`;
     if (el.classList.contains('tl-no-recording')) return `norec:${el.dataset.gap||el.dataset.start||''}`;
     if (el.classList.contains('tl-scale-mark')) return `scale:${el.dataset.ts||''}`;
